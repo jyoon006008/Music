@@ -124,6 +124,7 @@
             const nebulaRef = useRef(null);
             const auraRef = useRef(null);
             const auraUniformsRef = useRef(null);
+            const isWheelThrottledRef = useRef(false);
 
             const safeStopAndDisconnect = (node) => {
                 if (!node) return;
@@ -413,7 +414,7 @@
                             float dist = length(vUv - 0.5);
                             float glow = smoothstep(0.5, 0.0, dist);
                             float pulse = 0.4 + 0.6 * uBass;
-                            gl_FragColor = vec4(0.4, 0.2, 0.6, glow * 0.15 * pulse);
+                            gl_FragColor = vec4(0.4, 0.2, 0.6, glow * 0.07 * pulse);
                         }
                     `,
                     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
@@ -752,30 +753,35 @@
                 };
 
                 const handleWheel = (e) => {
-                    // Only handle horizontal wheel (touchpad swipe)
-                    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-                        e.preventDefault();
-                        wheelAccumulator += e.deltaX;
-                        
-                        // Use a debounce/throttle approach for track skipping
-                        if (Math.abs(wheelAccumulator) > 150) {
-                            if (wheelAccumulator > 0) {
-                                // Swipe Left (Positive deltaX) -> Next Track
-                                setTrackIndex(prev => (prev + 1) % tracks.length);
-                                targetCarouselAngleRef.current += 12;
-                            } else {
-                                // Swipe Right -> Prev Track
-                                setTrackIndex(prev => (prev - 1 + tracks.length) % tracks.length);
-                                targetCarouselAngleRef.current -= 12;
-                            }
-                            isPlayingRef.current = true;
-                            setIsPlaying(true);
-                            wheelAccumulator = 0;
-                        }
+                    if (isWheelThrottledRef.current) return;
+                    
+                    const absX = Math.abs(e.deltaX);
+                    const absY = Math.abs(e.deltaY);
 
-                        // Reset accumulator if no wheel event for a while
-                        if (wheelTimeout) clearTimeout(wheelTimeout);
-                        wheelTimeout = setTimeout(() => { wheelAccumulator = 0; }, 200);
+                    if (absX > absY && absX > 30) {
+                        // Horizontal: Track Skip
+                        e.preventDefault();
+                        isWheelThrottledRef.current = true;
+                        
+                        if (e.deltaX > 0) {
+                            setTrackIndex(prev => (prev + 1) % tracks.length);
+                            targetCarouselAngleRef.current += 12;
+                        } else {
+                            setTrackIndex(prev => (prev - 1 + tracks.length) % tracks.length);
+                            targetCarouselAngleRef.current -= 12;
+                        }
+                        isPlayingRef.current = true;
+                        setIsPlaying(true);
+                        
+                        setTimeout(() => { isWheelThrottledRef.current = false; }, 600);
+                    } else if (absY > absX && absY > 30) {
+                        // Vertical: Volume
+                        e.preventDefault();
+                        isWheelThrottledRef.current = true;
+                        
+                        adjustVolume(e.deltaY > 0 ? -0.1 : 0.1);
+                        
+                        setTimeout(() => { isWheelThrottledRef.current = false; }, 150);
                     }
                 };
 
