@@ -16,6 +16,13 @@
             justify-content: center;
             align-items: center;
         }
+        #player-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background: radial-gradient(circle at center, #0a0a0f 0%, #000000 100%);
+            overflow: hidden;
+        }
         #root {
             width: 100%;
             height: 100%;
@@ -38,7 +45,20 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useEffect, useRef, useState } = React;
+        const { useEffect, useRef, useState, useCallback } = React;
+
+        const tracks = [
+            { url: "./2%20soon.mp3", image: "2soon.png", title: "2 soon", artist: "keshi" },
+            { url: "./Any%20song%20(%EC%95%84%EB%AC%B4%EB%85%B8%EB%9E%98).mp3", image: "anysong.png", title: "아무노래 (Any Song)", artist: "지코 (ZICO)" },
+            { url: "./Beautiful%20Mistakes.mp3", image: "beautifulmistakes.png", title: "Beautiful Mistakes", artist: "Maroon 5 & Megan Thee Stallion" },
+            { url: "./Boat.mp3", image: "boat.png", title: "Boat", artist: "죠지" },
+            { url: "./Girls%20Like%20You%20(Cardi%20B%20Version).mp3", image: "girlslikeyou.png", title: "Girls Like You (Cardi B Version)", artist: "Maroon 5 (feat. Cardi B)" },
+            { url: "./Kids%20Are%20Born%20Stars.mp3", image: "kidsarebornstars.png", title: "Kids Are Born Stars", artist: "Lauv" },
+            { url: "./Sad%20Forever.mp3", image: "sadforever.png", title: "Sad Forever", artist: "Lauv" },
+            { url: "./Summer%20(Feat.%20BEO).mp3", image: "summer.png", title: "Summer", artist: "Paul Blanco (feat. BE'O(비오))" },
+            { url: "./Yesterday%20(Yesterday).mp3", image: "yesterday.png", title: "Yesterday", artist: "박재범" },
+            { url: "./download.mp3", image: "canilove.png", title: "Can I Love ?", artist: "Cosmic Boy (feat. Meego, 유라)" }
+        ];
 
         function PointCloudPlayer() {
             const mountRef = useRef(null);
@@ -68,7 +88,7 @@
             const isDraggingProgressRef = useRef(false);
             const progressDragValueRef = useRef(0);
             const durationRef = useRef(0);
-            const [dragTimeDisplay, setDragTimeDisplay] = useState(null);
+
 
             // Web Audio API refs for analysis
             const audioCtxRef = useRef(null);
@@ -98,6 +118,13 @@
             const showAlbumsRef = useRef(false);
             const longPressTimerRef = useRef(null);
 
+            // Background refs
+            const backgroundGroupRef = useRef(new THREE.Group());
+            const starFieldRef = useRef(null);
+            const nebulaRef = useRef(null);
+            const auraRef = useRef(null);
+            const auraUniformsRef = useRef(null);
+
             const safeStopAndDisconnect = (node) => {
                 if (!node) return;
                 node.onended = null;
@@ -105,28 +132,17 @@
                 try { node.disconnect(); } catch(e) {}
             };
 
-            const tracks = [
-                { url: "./2%20soon.mp3", image: "2soon.png", title: "2 soon", artist: "keshi" },
-                { url: "./Any%20song%20(%EC%95%84%EB%AC%B4%EB%85%B8%EB%9E%98).mp3", image: "anysong.png", title: "아무노래 (Any Song)", artist: "지코 (ZICO)" },
-                { url: "./Beautiful%20Mistakes.mp3", image: "beautifulmistakes.png", title: "Beautiful Mistakes", artist: "Maroon 5 & Megan Thee Stallion" },
-                { url: "./Boat.mp3", image: "boat.png", title: "Boat", artist: "죠지" },
-                { url: "./Girls%20Like%20You%20(Cardi%20B%20Version).mp3", image: "girlslikeyou.png", title: "Girls Like You (Cardi B Version)", artist: "Maroon 5 (feat. Cardi B)" },
-                { url: "./Kids%20Are%20Born%20Stars.mp3", image: "kidsarebornstars.png", title: "Kids Are Born Stars", artist: "Lauv" },
-                { url: "./Sad%20Forever.mp3", image: "sadforever.png", title: "Sad Forever", artist: "Lauv" },
-                { url: "./Summer%20(Feat.%20BEO).mp3", image: "summer.png", title: "Summer", artist: "Paul Blanco (feat. BE'O(비오))" },
-                { url: "./Yesterday%20(Yesterday).mp3", image: "yesterday.png", title: "Yesterday", artist: "박재범" },
-                { url: "./download.mp3", image: "canilove.png", title: "Can I Love ?", artist: "Cosmic Boy (feat. Meego, 유라)" }
-            ];
 
             useEffect(() => {
                 let isActive = true;
                 const initAudio = async () => {
+                    audioBufferRef.current = null;
                     setIsLoaded(false);
                     try {
                         if (!audioCtxRef.current) {
                             const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                             const analyser = audioCtx.createAnalyser();
-                            analyser.fftSize = 256;
+                            analyser.fftSize = 2048; // High resolution for deep bass
                             
                             const gainNode = audioCtx.createGain();
                             gainNode.gain.value = volumeRef.current;
@@ -229,7 +245,8 @@
                 const bgRing = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.012, 16, 128), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.15 }));
                 // Thinner progress ring, barely thicker than the background ring
                 const progressRing = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.018, 16, 128), ringMat);
-                const hitRing = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.6, 8, 32), new THREE.MeshBasicMaterial({visible: false}));
+                // Narrowed hit area (0.2 instead of 0.6) for more precise interaction
+                const hitRing = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.2, 8, 32), new THREE.MeshBasicMaterial({visible: false}));
                 
                 // Add Knob (Small Circle at front of progress bar) - adjust size to match the thinner ring
                 const knobMesh = new THREE.Mesh(new THREE.SphereGeometry(0.045, 16, 16), new THREE.MeshBasicMaterial({ color: 0xd1aaff }));
@@ -317,111 +334,183 @@
                 });
                 albumMeshesRef.current = albumMeshes;
 
-                // --- 1. Create Point Cloud Sphere (Energy Field Shader) ---
-                const sphereParticles = 6000;
-                const sphereGeometry = new THREE.BufferGeometry();
-                const spherePositions = new Float32Array(sphereParticles * 3);
-                const sphereColors = new Float32Array(sphereParticles * 3);
-                const spherePhase = new Float32Array(sphereParticles);
-                const sphereSpeed = new Float32Array(sphereParticles);
+                // --- 1. Background Layers (Cosmic Atmosphere) ---
+                const backgroundGroup = new THREE.Group();
+                scene.add(backgroundGroup);
+                backgroundGroupRef.current = backgroundGroup;
 
-                // Base purple color
-                const baseColor = new THREE.Color(0x9b51e0);
-
-                for (let i = 0; i < sphereParticles; i++) {
-                    // Volumetric distribution: Math.pow(random, 0.4) concentrates slightly near surface, leaving some deep inside
-                    const radius = 2.0 * Math.pow(Math.random(), 0.4);
-                    // Distribute points evenly using spherical coordinates
-                    const theta = Math.random() * 2 * Math.PI;
-                    const phi = Math.acos((Math.random() * 2) - 1);
-                    
-                    const x = radius * Math.sin(phi) * Math.cos(theta);
-                    const y = radius * Math.sin(phi) * Math.sin(theta);
-                    const z = radius * Math.cos(phi);
-
-                    spherePositions[i * 3] = x;
-                    spherePositions[i * 3 + 1] = y;
-                    spherePositions[i * 3 + 2] = z;
-
-                    // Add color variation around purple
-                    sphereColors[i * 3] = baseColor.r + (Math.random() - 0.5) * 0.3;
-                    sphereColors[i * 3 + 1] = baseColor.g + (Math.random() - 0.5) * 0.3;
-                    sphereColors[i * 3 + 2] = baseColor.b + (Math.random() - 0.5) * 0.3;
-                    
-                    // Specific animation rhythms for the shader
-                    spherePhase[i] = Math.random() * Math.PI * 2; // Random start phase
-                    sphereSpeed[i] = 0.5 + Math.random() * 1.5;   // Random pulsing frequency speed
+                // 1.1 Far Star Field
+                const starCount = 3000;
+                const starGeo = new THREE.BufferGeometry();
+                const starPos = new Float32Array(starCount * 3);
+                const starSizes = new Float32Array(starCount);
+                for (let i = 0; i < starCount; i++) {
+                    const r = 40 + Math.random() * 20;
+                    const theta = Math.random() * Math.PI * 2;
+                    const phi = Math.acos(Math.random() * 2 - 1);
+                    starPos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+                    starPos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+                    starPos[i * 3 + 2] = r * Math.cos(phi);
+                    starSizes[i] = 0.4 + Math.random() * 0.8;
                 }
-
-                sphereGeometry.setAttribute('position', new THREE.BufferAttribute(spherePositions, 3));
-                sphereGeometry.setAttribute('color', new THREE.BufferAttribute(sphereColors, 3));
-                sphereGeometry.setAttribute('aPhase', new THREE.BufferAttribute(spherePhase, 1));
-                sphereGeometry.setAttribute('aSpeed', new THREE.BufferAttribute(sphereSpeed, 1));
-
-                const sphereUniforms = {
-                    uTime: { value: 0.0 },
-                    uGlobalOpacity: { value: 0.8 }
-                };
-                sphereUniformsRef.current = sphereUniforms;
-
-                const sphereMaterial = new THREE.ShaderMaterial({
-                    uniforms: sphereUniforms,
+                starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+                starGeo.setAttribute('aSize', new THREE.BufferAttribute(starSizes, 1));
+                const starMat = new THREE.ShaderMaterial({
+                    uniforms: { uTime: { value: 0 } },
                     vertexShader: `
-                        attribute float aPhase;
-                        attribute float aSpeed;
-                        attribute vec3 color;
-                        varying vec3 vColor;
-                        varying float vAlpha;
+                        attribute float aSize;
                         uniform float uTime;
-                        uniform float uGlobalOpacity;
-                        
                         void main() {
-                            vColor = color;
-                            
-                            // Radial distance mapped to create center vs outer rhythm differences
-                            float dist = length(position);
-                            
-                            // Generate oscillating sine wave rhythm for this particle
-                            float rhythm = sin(uTime * aSpeed + aPhase + dist * 2.0);
-                            float normRhythm = (rhythm + 1.0) * 0.5; // 0.0 to 1.0
-                            
-                            vAlpha = 0.5 + 0.8 * normRhythm; // Brighter baseline limits opacity variation from 0.5 to 1.3
-                            vAlpha *= uGlobalOpacity; // Apply bass reacting global visual fade modifier
-                            
-                            // Pulse position: scale softly mimicking breathing movement
-                            vec3 pos = position * (0.95 + 0.05 * normRhythm);
-                            
-                            vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                            gl_PointSize = aSize * (150.0 / -mvPosition.z) * (0.8 + 0.2 * sin(uTime + position.x));
                             gl_Position = projectionMatrix * mvPosition;
-                            
-                            // Make points slightly larger globally matching the brighter energy
-                            gl_PointSize = (15.0 + 12.0 * normRhythm) * (1.0 / -mvPosition.z);
                         }
                     `,
                     fragmentShader: `
-                        varying vec3 vColor;
-                        varying float vAlpha;
-                        
                         void main() {
-                            // Perfect blurred circle rendering algorithm (GPU accelerated)
-                            vec2 coord = gl_PointCoord - vec2(0.5);
-                            float len = length(coord);
-                            if(len > 0.5) discard;
-                            
-                            float strength = 1.0 - (len * 2.0); // Center is 1.0, Edge is 0.0
-                            strength = smoothstep(0.0, 1.0, strength); // Feather the boundaries softly
-                            
-                            gl_FragColor = vec4(vColor * strength, vAlpha * strength);
+                            float d = length(gl_PointCoord - 0.5);
+                            if (d > 0.5) discard;
+                            gl_FragColor = vec4(0.8, 0.9, 1.0, 1.0 - d * 2.0);
                         }
                     `,
                     transparent: true,
-                    blending: THREE.AdditiveBlending,
-                    depthWrite: false
+                    blending: THREE.AdditiveBlending
                 });
+                const stars = new THREE.Points(starGeo, starMat);
+                backgroundGroup.add(stars);
+                starFieldRef.current = stars;
 
-                const spherePointCloud = new THREE.Points(sphereGeometry, sphereMaterial);
-                scene.add(spherePointCloud);
-                sphereRef.current = spherePointCloud;
+                // 1.2 Space Dust / Nebula Fog
+                const nebulaGeo = new THREE.PlaneGeometry(100, 100);
+                const nebulaMat = new THREE.ShaderMaterial({
+                    uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(0x1a0a2e) } },
+                    vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+                    fragmentShader: `
+                        varying vec2 vUv; uniform float uTime; uniform vec3 uColor;
+                        void main() {
+                            float n = sin(vUv.x * 5.0 + uTime * 0.1) * cos(vUv.y * 5.0 - uTime * 0.15);
+                            float dist = length(vUv - 0.5);
+                            float alpha = smoothstep(0.8, 0.2, dist) * (0.05 + 0.05 * n);
+                            gl_FragColor = vec4(uColor, alpha);
+                        }
+                    `,
+                    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+                });
+                const nebula = new THREE.Mesh(nebulaGeo, nebulaMat);
+                nebula.position.z = -30;
+                backgroundGroup.add(nebula);
+                nebulaRef.current = nebula;
+
+                // 1.3 Sphere Aura (Halo)
+                const auraGeo = new THREE.PlaneGeometry(10, 10);
+                const auraUniforms = { uTime: { value: 0 }, uBass: { value: 0 } };
+                const auraMat = new THREE.ShaderMaterial({
+                    uniforms: auraUniforms,
+                    vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+                    fragmentShader: `
+                        varying vec2 vUv; uniform float uTime; uniform float uBass;
+                        void main() {
+                            float dist = length(vUv - 0.5);
+                            float glow = smoothstep(0.5, 0.0, dist);
+                            float pulse = 0.4 + 0.6 * uBass;
+                            gl_FragColor = vec4(0.4, 0.2, 0.6, glow * 0.15 * pulse);
+                        }
+                    `,
+                    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+                });
+                const aura = new THREE.Mesh(auraGeo, auraMat);
+                aura.position.z = -0.5;
+                scene.add(aura);
+                auraRef.current = aura;
+                auraUniformsRef.current = auraUniforms;
+
+                // --- 2. Create Point Cloud Sphere Helper ---
+                const createSphere = (baseHex, particleCount = 4000) => {
+                    const geometry = new THREE.BufferGeometry();
+                    const positions = new Float32Array(particleCount * 3);
+                    const colors = new Float32Array(particleCount * 3);
+                    const phase = new Float32Array(particleCount);
+                    const speed = new Float32Array(particleCount);
+                    const baseColor = new THREE.Color(baseHex);
+
+                    for (let i = 0; i < particleCount; i++) {
+                        const radius = 2.0 * Math.pow(Math.random(), 0.4);
+                        const theta = Math.random() * 2 * Math.PI;
+                        const phi = Math.acos((Math.random() * 2) - 1);
+                        positions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
+                        positions[i * 3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
+                        positions[i * 3 + 2] = radius * Math.cos(phi);
+                        colors[i * 3] = baseColor.r + (Math.random() - 0.5) * 0.2;
+                        colors[i * 3 + 1] = baseColor.g + (Math.random() - 0.5) * 0.2;
+                        colors[i * 3 + 2] = baseColor.b + (Math.random() - 0.5) * 0.2;
+                        phase[i] = Math.random() * Math.PI * 2;
+                        speed[i] = 0.5 + Math.random() * 1.5;
+                    }
+
+                    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+                    geometry.setAttribute('aPhase', new THREE.BufferAttribute(phase, 1));
+                    geometry.setAttribute('aSpeed', new THREE.BufferAttribute(speed, 1));
+
+                    const uniforms = {
+                        uTime: { value: 0.0 },
+                        uGlobalOpacity: { value: 0.8 },
+                        uFreq: { value: 0.0 },
+                        uBass: { value: 0.0 }
+                    };
+
+                    const material = new THREE.ShaderMaterial({
+                        uniforms: uniforms,
+                        vertexShader: `
+                            attribute float aPhase;
+                            attribute float aSpeed;
+                            attribute vec3 color;
+                            varying vec3 vColor;
+                            varying float vAlpha;
+                            uniform float uTime;
+                            uniform float uGlobalOpacity;
+                            uniform float uFreq;
+                            uniform float uBass;
+                            void main() {
+                                vColor = color;
+                                float dist = length(position);
+                                float rhythm = sin(uTime * aSpeed + aPhase + dist * 2.0);
+                                float normRhythm = (rhythm + 1.0) * 0.5;
+                                // Base alpha + dramatic snappy bass brightness boost
+                                vAlpha = (0.5 + 0.8 * normRhythm) * uGlobalOpacity + (uBass * 2.5);
+                                float bounce = uFreq * fract(aPhase * 100.0) * 0.35; 
+                                float totalPulse = min(1.0, 0.72 + 0.06 * normRhythm + bounce); 
+                                vec3 pos = position * totalPulse;
+                                vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                                gl_Position = projectionMatrix * mvPosition;
+                                // Increase particle size slightly with bass for a subtle thump
+                                gl_PointSize = (12.0 + 10.0 * normRhythm + uBass * 6.0) * (1.0 / -mvPosition.z);
+                            }
+                        `,
+                        fragmentShader: `
+                            varying vec3 vColor;
+                            varying float vAlpha;
+                            void main() {
+                                vec2 coord = gl_PointCoord - vec2(0.5);
+                                float len = length(coord);
+                                if(len > 0.5) discard;
+                                float strength = smoothstep(0.0, 1.0, 1.0 - (len * 2.0));
+                                gl_FragColor = vec4(vColor * strength, vAlpha * strength);
+                            }
+                        `,
+                        transparent: true,
+                        blending: THREE.AdditiveBlending,
+                        depthWrite: false
+                    });
+
+                    return { mesh: new THREE.Points(geometry, material), uniforms };
+                };
+
+                // Main Sphere (Mid)
+                const mainObj = createSphere(0x9b51e0, 6500); // Slightly more particles for focus
+                scene.add(mainObj.mesh);
+                sphereRef.current = mainObj.mesh;
+                sphereUniformsRef.current = mainObj.uniforms;
 
                 // --- 2. Inner Play Triangle removed ---
 
@@ -430,36 +519,42 @@
 
                 const renderCanvas = () => {
                     let bassReact = 0;
+                    let midReact = 0;
+                    let highReact = 0;
                     
-                    // Simple low-frequency analysis if audio is playing
+                    // Multi-band analysis
                     if (analyserRef.current && dataArrayRef.current && sourceNodeRef.current) {
                         analyserRef.current.getByteFrequencyData(dataArrayRef.current);
                         
-                        let sum = 0;
-                        const bassLength = 10; // Focus on the lowest 10 frequency bins
-                        for(let i = 0; i < bassLength; i++) {
-                            sum += dataArrayRef.current[i];
-                        }
-                        // Normalize 0 to 1
-                        bassReact = (sum / bassLength) / 255.0;
+                        // Bass (Kick/Sub): 1-5 (~20Hz to 100Hz)
+                        let bSum = 0; for(let i=1; i<6; i++) bSum += dataArrayRef.current[i];
+                        bassReact = Math.pow((bSum / 5) / 255.0, 2.5); // Steeper curve for punchier response
+
+                        // Mid (Vocals/Inst): 20-100 (~430Hz to 2.1kHz)
+                        let mSum = 0; for(let i=20; i<101; i++) mSum += dataArrayRef.current[i];
+                        midReact = Math.pow((mSum / 80) / 255.0, 2.0);
+
+                        // High (Crisp/Detail): 200-500 (~4.3kHz to 10.7kHz)
+                        let hSum = 0; for(let i=200; i<501; i++) hSum += dataArrayRef.current[i];
+                        highReact = Math.pow((hSum / 300) / 255.0, 2.0);
                     }
 
                     // Connected Orbit Interaction State
                     orbitOpacityRef.current += ((showAlbumsRef.current ? 1 : 0) - orbitOpacityRef.current) * 0.15;
                     longPressScaleBoostRef.current += ((showAlbumsRef.current ? 0.3 : 0) - longPressScaleBoostRef.current) * 0.1;
 
-                    // Sphere physical size reaction
+                    // Sphere physical size reaction (Volume + Long Press focus)
                     const vol = volumeRef.current;
                     const baseScale = 0.2 + (vol * 0.8); 
-                    const targetScale = baseScale + (bassReact * 0.08 * vol) + longPressScaleBoostRef.current;
-                    spherePointCloud.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.2);
+                    const targetScale = baseScale + longPressScaleBoostRef.current;
+                    sphereRef.current.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.2);
                     
                     // Perspective-Correct Ring Scaling using geometric visual contours
                     // A 3D sphere visually dilates beyond its physical radius due to tangent perspective projection.
                     // This math dynamically adjusts the flat 2D Torus ring to maintain an exact visual 0.025 margin avoiding sphere intersection!
                     if (ringGroupRef.current) {
                         const D = 4.7434; // distance from camera(y:1.5, z:4.5) to origin(0,0,0)
-                        const R_sphere = 2.0 * spherePointCloud.scale.x;
+                        const R_sphere = 2.0 * sphereRef.current.scale.x;
                         const L = Math.sqrt(Math.max(0.1, D*D - R_sphere*R_sphere));
                         const visualRadiusSphere = R_sphere / L;
                         
@@ -502,29 +597,39 @@
                     }
 
                     // Dynamic Orbit Radius hugging the actively scaled sphere
-                    const currentSphereOuterRadius = 2.0 * spherePointCloud.scale.x;
+                    const currentSphereOuterRadius = 2.0 * sphereRef.current.scale.x;
                     const dynamicOrbitRadius = showAlbumsRef.current ? currentSphereOuterRadius + 0.6 : 0.01;
                     orbitRadiusRef.current += (dynamicOrbitRadius - orbitRadiusRef.current) * 0.15;
 
-                    // Sphere Engine visual parameters (maintain visibility during long press + Time loop)
-                    const sphereOpTarget = 1.1 + (bassReact * 0.4); // Noticeably brighter global opacity resting at 1.1 mapping AdditiveBlending beautifully
+                    // Sphere Engine visual parameters
+                    const sphereOpTarget = 1.1 + (midReact * 0.4); 
                     if (sphereUniformsRef.current) {
                         sphereUniformsRef.current.uGlobalOpacity.value += (sphereOpTarget - sphereUniformsRef.current.uGlobalOpacity.value) * 0.1;
-                        sphereUniformsRef.current.uTime.value += 0.02; // Push internal shader clock
+                        sphereUniformsRef.current.uTime.value += 0.02; 
+                        sphereUniformsRef.current.uFreq.value += (midReact - sphereUniformsRef.current.uFreq.value) * 0.15; 
+                        sphereUniformsRef.current.uBass.value += (bassReact - sphereUniformsRef.current.uBass.value) * 0.4;
                     }
+
+                    // Background Atmosphere Logic
+                    if (starFieldRef.current) starFieldRef.current.material.uniforms.uTime.value += 0.01;
+                    if (nebulaRef.current) nebulaRef.current.material.uniforms.uTime.value += 0.005;
+                    if (auraUniformsRef.current) {
+                        auraUniformsRef.current.uTime.value += 0.02;
+                        auraUniformsRef.current.uBass.value += (bassReact - auraUniformsRef.current.uBass.value) * 0.1;
+                    }
+                    // Parallax: Slowly drift background based on navigation
+                    backgroundGroupRef.current.rotation.y = -autoRotateAngleRef.current * 0.2 - (carouselAngleRef.current * (Math.PI / 180) * 0.1);
 
                     // Unified Rotation Loop
                     carouselAngleRef.current += (targetCarouselAngleRef.current - carouselAngleRef.current) * 0.15;
                     
-                    // Idle Auto-Rotation (Smooth slowly, Continuous Y-Axis Spin, Only When Playing)
-                    if (isPlayingRef.current) {
-                        autoRotateAngleRef.current += 0.001; 
-                    }
+                    // Idle Auto-Rotation (Smooth slowly, Continuous Y-Axis Spin, even when paused)
+                    autoRotateAngleRef.current += 0.0006; 
                     
                     // Y-axis integrates auto-rotation and interactive swivel (Negative sign synchronizes sphere geometry with orbit belt direction)
                     // Scaled rotation multiplier up drastically (2.2x) giving the swipe a highly responsive and pronounced spin
-                    spherePointCloud.rotation.y = -autoRotateAngleRef.current - (carouselAngleRef.current * (Math.PI / 180) * 2.2);
-                    spherePointCloud.rotation.z = 0; // Ensure Z is locked
+                    sphereRef.current.rotation.y = -autoRotateAngleRef.current - (carouselAngleRef.current * (Math.PI / 180) * 2.2);
+                    sphereRef.current.rotation.z = 0; // Ensure Z is locked
 
                     // --- Carousel 3D Orbital Trajectory Animation ---
                     albumMeshes.forEach((mesh, i) => {
@@ -573,8 +678,22 @@
                     window.removeEventListener('resize', handleResize);
                     cancelAnimationFrame(animationFrameId);
                     mount.removeChild(renderer.domElement);
-                    sphereGeometry.dispose();
-                    sphereMaterial.dispose();
+                    if (sphereRef.current) {
+                        sphereRef.current.geometry.dispose();
+                        sphereRef.current.material.dispose();
+                    }
+                    if (starFieldRef.current) {
+                        starFieldRef.current.geometry.dispose();
+                        starFieldRef.current.material.dispose();
+                    }
+                    if (nebulaRef.current) {
+                        nebulaRef.current.geometry.dispose();
+                        nebulaRef.current.material.dispose();
+                    }
+                    if (auraRef.current) {
+                        auraRef.current.geometry.dispose();
+                        auraRef.current.material.dispose();
+                    }
                     
                     albumMeshes.forEach(mesh => {
                         mesh.material.map.dispose();
@@ -593,8 +712,85 @@
                 };
             }, []); // Empty dependency ensures scene only initializes once
 
-            const togglePlay = () => {
-                if (!isLoaded || !audioBufferRef.current || !audioCtxRef.current) return;
+            const adjustVolume = useCallback((delta) => {
+                let newVol = volumeRef.current + delta;
+                newVol = Math.max(0, Math.min(1, newVol));
+                if (gainNodeRef.current) {
+                    gainNodeRef.current.gain.value = newVol;
+                }
+                volumeRef.current = newVol;
+                setVolume(newVol);
+            }, []);
+
+            useEffect(() => {
+                let wheelAccumulator = 0;
+                let wheelTimeout = null;
+
+                const handleKeyDown = (e) => {
+                    const isSpace = e.code === 'Space' || e.key === ' ' || e.keyCode === 32 || e.which === 32;
+                    if (isSpace && !e.repeat) {
+                        e.preventDefault();
+                        togglePlay();
+                    }
+ else if (e.code === 'ArrowLeft') {
+                        setTrackIndex(prev => (prev - 1 + tracks.length) % tracks.length);
+                        targetCarouselAngleRef.current -= 12;
+                        isPlayingRef.current = true;
+                        setIsPlaying(true);
+                    } else if (e.code === 'ArrowRight') {
+                        setTrackIndex(prev => (prev + 1) % tracks.length);
+                        targetCarouselAngleRef.current += 12;
+                        isPlayingRef.current = true;
+                        setIsPlaying(true);
+                    } else if (e.code === 'ArrowUp') {
+                        e.preventDefault();
+                        adjustVolume(e.repeat ? 0.02 : 0.1);
+                    } else if (e.code === 'ArrowDown') {
+                        e.preventDefault();
+                        adjustVolume(e.repeat ? -0.02 : -0.1);
+                    }
+                };
+
+                const handleWheel = (e) => {
+                    // Only handle horizontal wheel (touchpad swipe)
+                    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+                        e.preventDefault();
+                        wheelAccumulator += e.deltaX;
+                        
+                        // Use a debounce/throttle approach for track skipping
+                        if (Math.abs(wheelAccumulator) > 150) {
+                            if (wheelAccumulator > 0) {
+                                // Swipe Left (Positive deltaX) -> Next Track
+                                setTrackIndex(prev => (prev + 1) % tracks.length);
+                                targetCarouselAngleRef.current += 12;
+                            } else {
+                                // Swipe Right -> Prev Track
+                                setTrackIndex(prev => (prev - 1 + tracks.length) % tracks.length);
+                                targetCarouselAngleRef.current -= 12;
+                            }
+                            isPlayingRef.current = true;
+                            setIsPlaying(true);
+                            wheelAccumulator = 0;
+                        }
+
+                        // Reset accumulator if no wheel event for a while
+                        if (wheelTimeout) clearTimeout(wheelTimeout);
+                        wheelTimeout = setTimeout(() => { wheelAccumulator = 0; }, 200);
+                    }
+                };
+
+                window.addEventListener('keydown', handleKeyDown);
+                window.addEventListener('wheel', handleWheel, { passive: false });
+                
+                return () => {
+                    window.removeEventListener('keydown', handleKeyDown);
+                    window.removeEventListener('wheel', handleWheel);
+                    if (wheelTimeout) clearTimeout(wheelTimeout);
+                };
+            }, [adjustVolume, togglePlay]);
+
+            const togglePlay = useCallback(() => {
+                if (!audioBufferRef.current || !audioCtxRef.current) return;
                 
                 if (audioCtxRef.current.state === 'suspended') {
                     audioCtxRef.current.resume();
@@ -633,7 +829,7 @@
                     isPlayingRef.current = true;
                     setIsPlaying(true);
                 }
-            };
+            }, []);
 
             const cancelLongPress = () => {
                 if (longPressTimerRef.current) {
@@ -648,25 +844,28 @@
                 return `${m}:${s}`;
             };
 
-            const updateProgressFromScreen = (clientX, clientY) => {
+            const updateProgressFromScreen = (screenX, screenY) => {
                 const centerX = window.innerWidth / 2;
                 const centerY = window.innerHeight / 2;
-                const dx = clientX - centerX;
-                const dy = clientY - centerY;
+                const dx = screenX - centerX;
+                const dy = screenY - centerY;
+                
                 // negative dy because screen Y goes down, we want 12 o'clock at top (-Y)
                 let angle = Math.atan2(dx, -dy);
                 if (angle < 0) angle += Math.PI * 2;
                 
-                const prog = angle / (Math.PI * 2);
-                progressDragValueRef.current = prog;
-                ringUniformsRef.current.progress.value = prog;
+                let progress = angle / (Math.PI * 2);
                 
-                if (durationRef.current) {
-                    setDragTimeDisplay({
-                        current: formatTime(prog * durationRef.current),
-                        total: formatTime(durationRef.current)
-                    });
+                // Stopper Logic: prevent accidental jumps between ~0% and ~100% (at the 12 o'clock line)
+                const lastProg = progressDragValueRef.current;
+                if (lastProg > 0.8 && progress < 0.2) {
+                    progress = 1.0;
+                } else if (lastProg < 0.2 && progress > 0.8) {
+                    progress = 0.0;
                 }
+                
+                progressDragValueRef.current = progress;
+                ringUniformsRef.current.progress.value = progress;
             };
 
             const seekTo = (progress) => {
@@ -793,7 +992,6 @@
                 
                 if (isDraggingProgressRef.current) {
                     isDraggingProgressRef.current = false;
-                    setDragTimeDisplay(null);
                     seekTo(progressDragValueRef.current);
                     pointerDownRef.current = false;
                     pointerAxisRef.current = null;
@@ -848,6 +1046,7 @@
 
             return (
                 <div 
+                    id="player-container"
                     ref={mountRef} 
                     style={{ width: '100%', height: '100%', touchAction: 'none', position: 'relative' }} 
                     onPointerDown={handlePointerDown} 
@@ -877,30 +1076,6 @@
                             {playingTrackArtist}
                         </div>
                     </div>
-
-                    {/* Progress Drag Time HUD */}
-                    {dragTimeDisplay && (
-                        <div style={{
-                            position: 'absolute',
-                            top: '40%',
-                            left: '50%',
-                            transform: 'translate(-50%, -50%)',
-                            color: 'white',
-                            textAlign: 'center',
-                            fontFamily: 'monospace',
-                            fontSize: '28px',
-                            fontWeight: 'bold',
-                            pointerEvents: 'none',
-                            zIndex: 30,
-                            textShadow: '0 0 15px #d1aaff',
-                            background: 'rgba(42, 26, 74, 0.5)',
-                            padding: '10px 20px',
-                            borderRadius: '20px',
-                            border: '2px solid rgba(209, 170, 255, 0.4)'
-                        }}>
-                            {dragTimeDisplay.current} <span style={{fontSize:'20px',color:'rgba(255,255,255,0.5)'}}>/ {dragTimeDisplay.total}</span>
-                        </div>
-                    )}
                 </div>
             );
         }
