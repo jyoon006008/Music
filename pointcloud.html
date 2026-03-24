@@ -126,6 +126,10 @@
             const auraUniformsRef = useRef(null);
             const isWheelThrottledRef = useRef(false);
 
+            // Responsive Scaling refs
+            const responsiveScaleRef = useRef(1.0);
+            const pixelRatioRef = useRef(window.devicePixelRatio || 1);
+
             const safeStopAndDisconnect = (node) => {
                 if (!node) return;
                 node.onended = null;
@@ -357,13 +361,20 @@
                 starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
                 starGeo.setAttribute('aSize', new THREE.BufferAttribute(starSizes, 1));
                 const starMat = new THREE.ShaderMaterial({
-                    uniforms: { uTime: { value: 0 } },
+                    uniforms: { 
+                        uTime: { value: 0 },
+                        uPixelRatio: { value: pixelRatioRef.current },
+                        uResponsiveScale: { value: responsiveScaleRef.current }
+                    },
                     vertexShader: `
                         attribute float aSize;
                         uniform float uTime;
+                        uniform float uPixelRatio;
+                        uniform float uResponsiveScale;
                         void main() {
                             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-                            gl_PointSize = aSize * (150.0 / -mvPosition.z) * (0.8 + 0.2 * sin(uTime + position.x));
+                            float sizeFactor = uPixelRatio * max(0.6, uResponsiveScale);
+                            gl_PointSize = aSize * (150.0 / -mvPosition.z) * (0.8 + 0.2 * sin(uTime + position.x)) * sizeFactor;
                             gl_Position = projectionMatrix * mvPosition;
                         }
                     `,
@@ -404,10 +415,23 @@
 
                 // 1.3 Sphere Aura (Halo)
                 const auraGeo = new THREE.PlaneGeometry(10, 10);
-                const auraUniforms = { uTime: { value: 0 }, uBass: { value: 0 } };
+                const auraUniforms = { 
+                    uTime: { value: 0 }, 
+                    uBass: { value: 0 },
+                    uResponsiveScale: { value: responsiveScaleRef.current }
+                };
                 const auraMat = new THREE.ShaderMaterial({
                     uniforms: auraUniforms,
-                    vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+                    vertexShader: `
+                        varying vec2 vUv; 
+                        uniform float uResponsiveScale;
+                        void main() { 
+                            vUv = uv; 
+                            // Scale the aura mesh directly in the vertex shader for simplicity
+                            vec3 pos = position * uResponsiveScale;
+                            gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0); 
+                        }
+                    `,
                     fragmentShader: `
                         varying vec2 vUv; uniform float uTime; uniform float uBass;
                         void main() {
@@ -457,7 +481,9 @@
                         uTime: { value: 0.0 },
                         uGlobalOpacity: { value: 0.8 },
                         uFreq: { value: 0.0 },
-                        uBass: { value: 0.0 }
+                        uBass: { value: 0.0 },
+                        uPixelRatio: { value: pixelRatioRef.current },
+                        uResponsiveScale: { value: responsiveScaleRef.current }
                     };
 
                     const material = new THREE.ShaderMaterial({
@@ -472,20 +498,24 @@
                             uniform float uGlobalOpacity;
                             uniform float uFreq;
                             uniform float uBass;
+                            uniform float uPixelRatio;
+                            uniform float uResponsiveScale;
                             void main() {
                                 vColor = color;
                                 float dist = length(position);
                                 float rhythm = sin(uTime * aSpeed + aPhase + dist * 2.0);
                                 float normRhythm = (rhythm + 1.0) * 0.5;
-                                // Base alpha + dramatic snappy bass brightness boost
-                                vAlpha = (0.5 + 0.8 * normRhythm) * uGlobalOpacity + (uBass * 2.5);
+                                // Base alpha + dramatic snappy bass brightness boost (slightly more visible on small screens)
+                                float visibilityBoost = uResponsiveScale < 0.8 ? 0.3 : 0.0;
+                                vAlpha = (0.5 + visibilityBoost + 0.8 * normRhythm) * uGlobalOpacity + (uBass * 2.5);
                                 float bounce = uFreq * fract(aPhase * 100.0) * 0.35; 
                                 float totalPulse = min(1.0, 0.72 + 0.06 * normRhythm + bounce); 
                                 vec3 pos = position * totalPulse;
                                 vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
                                 gl_Position = projectionMatrix * mvPosition;
-                                // Increase particle size slightly with bass for a subtle thump
-                                gl_PointSize = (12.0 + 10.0 * normRhythm + uBass * 6.0) * (1.0 / -mvPosition.z);
+                                // Increase particle size with bass for extra punch, corrected for pixel ratio
+                                float baseSize = (11.0 + 10.0 * normRhythm + uBass * 6.0);
+                                gl_PointSize = baseSize * (1.0 / -mvPosition.z) * uPixelRatio * max(0.6, uResponsiveScale);
                             }
                         `,
                         fragmentShader: `
@@ -544,23 +574,24 @@
                     orbitOpacityRef.current += ((showAlbumsRef.current ? 1 : 0) - orbitOpacityRef.current) * 0.15;
                     longPressScaleBoostRef.current += ((showAlbumsRef.current ? 0.3 : 0) - longPressScaleBoostRef.current) * 0.1;
 
-                    // Sphere physical size reaction (Volume + Long Press focus)
+                    // Sphere physical size reaction (Volume + Long Press + Responsive Scale)
                     const vol = volumeRef.current;
-                    const baseScale = 0.2 + (vol * 0.8); 
-                    const targetScale = baseScale + longPressScaleBoostRef.current;
+                    const resScale = responsiveScaleRef.current;
+                    const baseScale = (0.2 + (vol * 0.8)) * resScale; 
+                    const targetScale = baseScale + longPressScaleBoostRef.current * resScale;
                     sphereRef.current.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.2);
                     
-                    // Perspective-Correct Ring Scaling using geometric visual contours
-                    // A 3D sphere visually dilates beyond its physical radius due to tangent perspective projection.
-                    // This math dynamically adjusts the flat 2D Torus ring to maintain an exact visual 0.025 margin avoiding sphere intersection!
+                    // Perspective-Correct Ring Scaling
                     if (ringGroupRef.current) {
-                        const D = 4.7434; // distance from camera(y:1.5, z:4.5) to origin(0,0,0)
+                        const D = 4.7434; 
                         const R_sphere = 2.0 * sphereRef.current.scale.x;
                         const L = Math.sqrt(Math.max(0.1, D*D - R_sphere*R_sphere));
                         const visualRadiusSphere = R_sphere / L;
                         
-                        const targetRingRadius = (visualRadiusSphere + 0.025) * D; // 0.025 is the constant visual gap
-                        const targetRingScale = targetRingRadius / 2.2; // 2.2 is the base Torus geometry radius
+                        // Slightly tighter ring on small screens to save space
+                        const margin = resScale < 0.7 ? 0.015 : 0.025;
+                        const targetRingRadius = (visualRadiusSphere + margin) * D; 
+                        const targetRingScale = targetRingRadius / 2.2; 
                         
                         ringGroupRef.current.scale.set(targetRingScale, targetRingScale, targetRingScale);
                     }
@@ -669,11 +700,25 @@
                 renderCanvas();
 
                 const handleResize = () => {
-                    camera.aspect = mount.clientWidth / mount.clientHeight;
+                    const width = mount.clientWidth;
+                    const height = mount.clientHeight;
+                    camera.aspect = width / height;
                     camera.updateProjectionMatrix();
-                    renderer.setSize(mount.clientWidth, mount.clientHeight);
+                    renderer.setSize(width, height);
+                    
+                    // Unified Responsive Scale Calculation
+                    const isMobile = width < 600;
+                    const baseDimension = Math.min(width, height);
+                    const scale = baseDimension / 900.0; // Normalized for 900px base
+                    responsiveScaleRef.current = isMobile ? Math.min(scale, 0.75) : Math.min(scale, 1.2);
+                    
+                    // Update Uniforms
+                    if (sphereUniformsRef.current) sphereUniformsRef.current.uResponsiveScale.value = responsiveScaleRef.current;
+                    if (starFieldRef.current) starFieldRef.current.material.uniforms.uResponsiveScale.value = responsiveScaleRef.current;
+                    if (auraUniformsRef.current) auraUniformsRef.current.uResponsiveScale.value = responsiveScaleRef.current;
                 };
                 window.addEventListener('resize', handleResize);
+                handleResize(); // Initial call
 
                 return () => {
                     window.removeEventListener('resize', handleResize);
@@ -1050,6 +1095,8 @@
             const playingTrackTitle = tracks[trackIndex].title;
             const playingTrackArtist = tracks[trackIndex].artist;
 
+            const isSmallScreen = window.innerWidth < 600;
+
             return (
                 <div 
                     id="player-container"
@@ -1060,10 +1107,11 @@
                     onPointerUp={handlePointerUp}
                     onPointerLeave={handlePointerUp}
                 >
-                    {/* Fixed Bottom Track Info */}
+                    {/* Responsive Track Info */}
                     <div style={{
                         position: 'absolute',
-                        bottom: '30px',
+                        top: isSmallScreen ? '60px' : 'auto',
+                        bottom: isSmallScreen ? 'auto' : '30px',
                         left: '50%',
                         transform: 'translateX(-50%)',
                         color: 'white',
@@ -1073,12 +1121,14 @@
                         zIndex: 20,
                         padding: '15px 30px',
                         borderRadius: '15px',
-                        textShadow: '0px 2px 10px rgba(0,0,0,0.8)'
+                        textShadow: '0px 2px 10px rgba(0,0,0,0.8)',
+                        width: '80%',
+                        maxWidth: '400px'
                     }}>
-                        <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '8px', letterSpacing: '0.5px' }}>
+                        <div style={{ fontSize: isSmallScreen ? '18px' : '22px', fontWeight: 'bold', marginBottom: '8px', letterSpacing: '0.5px' }}>
                             {playingTrackTitle}
                         </div>
-                        <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.7)' }}>
+                        <div style={{ fontSize: isSmallScreen ? '13px' : '15px', color: 'rgba(255,255,255,0.7)' }}>
                             {playingTrackArtist}
                         </div>
                     </div>
