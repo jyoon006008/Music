@@ -1,0 +1,1549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aural Nebula</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: #000;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #player-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background: radial-gradient(circle at center, #0a0a0f 0%, #000000 100%);
+            overflow: hidden;
+        }
+        #root {
+            width: 100%;
+            height: 100%;
+        }
+        canvas {
+            display: block;
+            cursor: pointer;
+        }
+    </style>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for in-browser JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- MediaPipe Tasks Vision (Dynamic Import instead) -->
+    <!-- Auto-Reload Development Script -->
+    <script>
+        (function() {
+            let lastMod = null;
+            setInterval(async () => {
+                try {
+                    const res = await fetch(location.href, { method: 'HEAD' });
+                    const currentMod = res.headers.get('Last-Modified') || res.headers.get('ETag');
+                    if (lastMod && currentMod && lastMod !== currentMod) location.reload();
+                    lastMod = currentMod;
+                } catch(e) {}
+            }, 1000);
+        })();
+    </script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useEffect, useRef, useState, useCallback } = React;
+
+        const tracks = [
+            { url: "./Any%20song%20(%EC%95%84%EB%AC%B4%EB%85%B8%EB%9E%98).mp3", image: "anysong.png", title: "아무노래 (Any Song)", artist: "지코 (ZICO)" },
+            { url: "./2%20soon.mp3", image: "2soon.png", title: "2 soon", artist: "keshi" },
+            { url: "./Beautiful%20Mistakes.mp3", image: "beautifulmistakes.png", title: "Beautiful Mistakes", artist: "Maroon 5 & Megan Thee Stallion" },
+            { url: "./Boat.mp3", image: "boat.png", title: "Boat", artist: "죠지" },
+            { url: "./Girls%20Like%20You%20(Cardi%20B%20Version).mp3", image: "girlslikeyou.png", title: "Girls Like You (Cardi B Version)", artist: "Maroon 5 (feat. Cardi B)" },
+            { url: "./Kids%20Are%20Born%20Stars.mp3", image: "kidsarebornstars.png", title: "Kids Are Born Stars", artist: "Lauv" },
+            { url: "./Sad%20Forever.mp3", image: "sadforever.png", title: "Sad Forever", artist: "Lauv" },
+            { url: "./Summer%20(Feat.%20BEO).mp3", image: "summer.png", title: "Summer", artist: "Paul Blanco (feat. BE'O(비오))" },
+            { url: "./Yesterday%20(Yesterday).mp3", image: "yesterday.png", title: "Yesterday", artist: "박재범" },
+            { url: "./download.mp3", image: "canilove.png", title: "Can I Love ?", artist: "Cosmic Boy (feat. Meego, 유라)" }
+        ];
+
+        function PointCloudPlayer() {
+            const mountRef = useRef(null);
+            const [isPlaying, setIsPlaying] = useState(false);
+            const [isLoaded, setIsLoaded] = useState(false);
+            const [trackIndex, setTrackIndex] = useState(0);
+            
+            // Volume state & refs
+            const [volume, setVolume] = useState(1.0);
+            const volumeRef = useRef(1.0);
+            const gainNodeRef = useRef(null);
+            const dragStartVolumeRef = useRef(1.0);
+            const carouselAngleRef = useRef(0);
+            const targetCarouselAngleRef = useRef(0);
+            const dragStartAngleRef = useRef(0);
+            const orbitRadiusRef = useRef(0);
+            const orbitOpacityRef = useRef(0);
+            const longPressScaleBoostRef = useRef(0);
+            const autoRotateAngleRef = useRef(0);
+            const albumMeshesRef = useRef([]);
+            
+            // Ring Progress State
+            const hitRingRef = useRef(null);
+            const ringGroupRef = useRef(null);
+            const progressKnobRef = useRef(null);
+            const ringUniformsRef = useRef(null);
+            const isDraggingProgressRef = useRef(false);
+            const progressDragValueRef = useRef(0);
+            const durationRef = useRef(0);
+
+
+            // Web Audio API refs for analysis
+            const audioCtxRef = useRef(null);
+            const analyserRef = useRef(null);
+            const dataArrayRef = useRef(null);
+            const audioBufferRef = useRef(null);
+            const sourceNodeRef = useRef(null);
+            const playbackTimeRef = useRef(0);
+            const startTimeRef = useRef(0);
+            
+            // Interaction & Swipe refs
+            const isPlayingRef = useRef(false);
+            const pointerDownRef = useRef(false);
+            const pointerStartXRef = useRef(0);
+            const pointerStartYRef = useRef(0);
+            const pointerAxisRef = useRef(null);
+
+            // Three.js refs for raycasting
+            const cameraRef = useRef(null);
+            const sphereRef = useRef(null);
+            const sphereUniformsRef = useRef(null);
+            const raycasterRef = useRef(new THREE.Raycaster());
+            const mouseRef = useRef(new THREE.Vector2());
+
+            // New Long Press & Album UI refs
+            const [showAlbums, setShowAlbums] = useState(false);
+            const showAlbumsRef = useRef(false);
+            const longPressTimerRef = useRef(null);
+
+            // Background refs
+            const backgroundGroupRef = useRef(new THREE.Group());
+            const starFieldRef = useRef(null);
+            const nebulaRef = useRef(null);
+            const auraRef = useRef(null);
+            const auraUniformsRef = useRef(null);
+            const isWheelThrottledRef = useRef(false);
+
+            // Responsive Scaling refs
+            const responsiveScaleRef = useRef(1.0);
+            const pixelRatioRef = useRef(window.devicePixelRatio || 1);
+
+            // --- Webcam & Vision Refs ---
+            const [debugMode, setDebugMode] = useState(false);
+            const videoRef = useRef(null);
+            const canvasRef = useRef(null);
+            const faceLandmarkerRef = useRef(null);
+            const handLandmarkerRef = useRef(null);
+            const visionLoopRef = useRef(null);
+            const lastVideoTimeRef = useRef(-1);
+
+            // Gesture State Refs
+            const isUserLookingRef = useRef(false);
+            const handStateRef = useRef('NONE');
+            const gestureStartPosRef = useRef({x: 0, y: 0});
+            const lastHandPosRef = useRef({x: 0, y: 0});
+            const actionCooldownRef = useRef(0);
+            const gesturePinchRef = useRef(false);
+            const pinchStartPosRef = useRef({x:0, y:0});
+            const pinchStartTimeRef = useRef(0);
+            const pinchLongPressTimerRef = useRef(null);
+            const gestureSeekRef = useRef(false);
+            const seekStartPosRef = useRef({x:0, y:0});
+            const trackingLossCountRef = useRef(0);
+
+            const safeStopAndDisconnect = (node) => {
+                if (!node) return;
+                node.onended = null;
+                try { node.stop(); } catch(e) {}
+                try { node.disconnect(); } catch(e) {}
+            };
+
+
+            useEffect(() => {
+                let isActive = true;
+                const initAudio = async () => {
+                    audioBufferRef.current = null;
+                    setIsLoaded(false);
+                    try {
+                        if (!audioCtxRef.current) {
+                            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                            const analyser = audioCtx.createAnalyser();
+                            analyser.fftSize = 2048; // High resolution for deep bass
+                            
+                            const gainNode = audioCtx.createGain();
+                            gainNode.gain.value = volumeRef.current;
+                            
+                            audioCtxRef.current = audioCtx;
+                            analyserRef.current = analyser;
+                            gainNodeRef.current = gainNode;
+                            dataArrayRef.current = new Uint8Array(analyser.frequencyBinCount);
+                        }
+
+                        if (sourceNodeRef.current) {
+                            safeStopAndDisconnect(sourceNodeRef.current);
+                            sourceNodeRef.current = null;
+                        }
+
+                        // Fetch requested track from CDN
+                        const trackName = tracks[trackIndex].url.replace("./", "");
+                        const response = await fetch(`https://cdn.jsdelivr.net/gh/jyoon006008/Music@main/${trackName}`);
+                        const arrayBuffer = await response.arrayBuffer();
+                        const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
+                        
+                        if (!isActive) return;
+
+                        audioBufferRef.current = audioBuffer;
+                        durationRef.current = audioBuffer.duration; // Vital: saves track duration for seek
+                        playbackTimeRef.current = 0;
+                        setIsLoaded(true);
+
+                        if (isPlayingRef.current && audioCtxRef.current) {
+                            if (audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume();
+                            const source = audioCtxRef.current.createBufferSource();
+                            source.buffer = audioBuffer;
+                            
+                            source.connect(analyserRef.current);
+                            analyserRef.current.connect(gainNodeRef.current);
+                            gainNodeRef.current.connect(audioCtxRef.current.destination);
+                            
+                            source.onended = () => {
+                                targetCarouselAngleRef.current += 12;
+                                setTrackIndex(prev => (prev + 1) % tracks.length);
+                            };
+
+                            source.start(0);
+                            startTimeRef.current = audioCtxRef.current.currentTime;
+                            sourceNodeRef.current = source;
+                        }
+                    } catch (err) {
+                        console.error("Audio fetch/decode failed", err);
+                    }
+                };
+                initAudio();
+                
+                return () => {
+                    isActive = false;
+                };
+            }, [trackIndex]);
+
+            // Three.js Scene Setup runs exactly once per mount
+            useEffect(() => {
+                const mount = mountRef.current;
+                
+                // Set up Scene, Camera, and Renderer
+                const scene = new THREE.Scene();
+                const camera = new THREE.PerspectiveCamera(75, mount.clientWidth / mount.clientHeight, 0.1, 1000);
+                camera.position.z = 4.5;
+                cameraRef.current = camera;
+
+                const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                renderer.setSize(mount.clientWidth, mount.clientHeight);
+                renderer.setPixelRatio(window.devicePixelRatio);
+                mount.appendChild(renderer.domElement);
+
+                // --- Progress Ring Setup ---
+                const ringGroup = new THREE.Group();
+                ringGroup.lookAt(camera.position); // Ensure the ring perfectly faces the camera like a flat circular HUD
+                scene.add(ringGroup);
+                ringGroupRef.current = ringGroup;
+                
+                const ringInnerGroup = new THREE.Group();
+                ringInnerGroup.scale.x = -1; // Flip X horizontally to make coordinates evaluate naturally clockwise
+                ringInnerGroup.rotation.z = -Math.PI / 2; // -90deg Offset: aligns vUv 0.0 perfectly to TOP (12 o'clock) considering TRS matrix order
+                ringGroup.add(ringInnerGroup);
+                
+                const ringUniforms = {
+                    progress: { value: 0.0 }, // 0 to 1
+                    color: { value: new THREE.Color(0xd1aaff) },
+                    opacity: { value: 0.8 }
+                };
+                ringUniformsRef.current = ringUniforms;
+
+                const ringMat = new THREE.ShaderMaterial({
+                    uniforms: ringUniforms,
+                    vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+                    fragmentShader: `varying vec2 vUv; uniform float progress; uniform vec3 color; uniform float opacity; void main() { if (vUv.x > progress) discard; gl_FragColor = vec4(color, opacity); }`,
+                    transparent: true,
+                    side: THREE.DoubleSide
+                });
+
+                const radius = 2.2; // Snug closely to the point cloud natively mapping 2.0 baseline
+                const bgRing = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.012, 16, 128), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.15 }));
+                // Thinner progress ring, barely thicker than the background ring
+                const progressRing = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.018, 16, 128), ringMat);
+                // Narrowed hit area (0.2 instead of 0.6) for more precise interaction
+                const hitRing = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.2, 8, 32), new THREE.MeshBasicMaterial({visible: false}));
+                
+                // Add Knob (Small Circle at front of progress bar) - adjust size to match the thinner ring
+                const knobMesh = new THREE.Mesh(new THREE.SphereGeometry(0.045, 16, 16), new THREE.MeshBasicMaterial({ color: 0xd1aaff }));
+                progressKnobRef.current = knobMesh;
+
+                ringInnerGroup.add(bgRing);
+                ringInnerGroup.add(progressRing);
+                ringInnerGroup.add(hitRing);
+                ringInnerGroup.add(knobMesh);
+                hitRingRef.current = hitRing;
+
+                // --- 3D Carousel Setup ---
+                const albumMeshes = [];
+                const renderTracks = tracks; // No loop
+                renderTracks.forEach((trackInfo, i) => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 256; canvas.height = 340; // Taller for text
+                    const ctx = canvas.getContext('2d');
+                    
+                    const r = 30;
+                    // Placeholder background
+                    ctx.fillStyle = '#2a1a4a';
+                    ctx.beginPath();
+                    ctx.moveTo(r, 0); ctx.lineTo(256-r, 0); ctx.quadraticCurveTo(256, 0, 256, r);
+                    ctx.lineTo(256, 256-r); ctx.quadraticCurveTo(256, 256, 256-r, 256);
+                    ctx.lineTo(r, 256); ctx.quadraticCurveTo(0, 256, 0, 256-r);
+                    ctx.lineTo(0, r); ctx.quadraticCurveTo(0, 0, r, 0);
+                    ctx.fill();
+                    
+                    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                    ctx.font = 'bold 20px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(trackInfo.title.substring(0, 15), 128, 128); // Fallback text
+                    
+                    const tex = new THREE.CanvasTexture(canvas);
+                    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, depthWrite: false });
+                    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.73), mat); // Taller geometry matching aspect ratio
+                    
+                    // Trigger Image Load
+                    const img = new Image();
+                    img.crossOrigin = "anonymous";
+                    img.src = `https://cdn.jsdelivr.net/gh/jyoon006008/Music@main/${trackInfo.image}`;
+                    img.onload = () => {
+                        ctx.clearRect(0, 0, 256, 340);
+                        
+                        // 1. Draw rounded clip area for the album cover (0 to 256)
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.moveTo(r, 0); ctx.lineTo(256-r, 0); ctx.quadraticCurveTo(256, 0, 256, r);
+                        ctx.lineTo(256, 256-r); ctx.quadraticCurveTo(256, 256, 256-r, 256);
+                        ctx.lineTo(r, 256); ctx.quadraticCurveTo(0, 256, 0, 256-r);
+                        ctx.lineTo(0, r); ctx.quadraticCurveTo(0, 0, r, 0);
+                        ctx.closePath();
+                        ctx.clip();
+                        ctx.drawImage(img, 0, 0, 256, 256);
+                        ctx.restore();
+
+                        // 2. Draw text details below the album cover
+                        ctx.textAlign = 'center';
+                        
+                        // Title
+                        ctx.fillStyle = 'white';
+                        ctx.font = 'bold 24px sans-serif';
+                        ctx.textBaseline = 'top';
+                        let shortTitle = trackInfo.title;
+                        if (shortTitle.length > 18) shortTitle = shortTitle.substring(0, 16) + '...';
+                        ctx.fillText(shortTitle, 128, 275);
+                        
+                        // Artist
+                        ctx.fillStyle = '#b3b3b3';
+                        ctx.font = '18px sans-serif';
+                        let shortArtist = trackInfo.artist;
+                        if (shortArtist.length > 22) shortArtist = shortArtist.substring(0, 20) + '...';
+                        ctx.fillText(shortArtist, 128, 305);
+                        
+                        tex.needsUpdate = true;
+                    };
+                    
+                    const angle = i * (Math.PI * 2 / renderTracks.length); // 12 degrees
+                    const radius = 2.6; // initial dummy radius
+
+                    scene.add(mesh);
+                    albumMeshes.push(mesh);
+                });
+                albumMeshesRef.current = albumMeshes;
+
+                // --- 1. Background Layers (Cosmic Atmosphere) ---
+                const backgroundGroup = new THREE.Group();
+                scene.add(backgroundGroup);
+                backgroundGroupRef.current = backgroundGroup;
+
+                // 1.1 Far Star Field
+                const starCount = 3000;
+                const starGeo = new THREE.BufferGeometry();
+                const starPos = new Float32Array(starCount * 3);
+                const starSizes = new Float32Array(starCount);
+                for (let i = 0; i < starCount; i++) {
+                    const r = 40 + Math.random() * 20;
+                    const theta = Math.random() * Math.PI * 2;
+                    const phi = Math.acos(Math.random() * 2 - 1);
+                    starPos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+                    starPos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+                    starPos[i * 3 + 2] = r * Math.cos(phi);
+                    starSizes[i] = 0.4 + Math.random() * 0.8;
+                }
+                starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+                starGeo.setAttribute('aSize', new THREE.BufferAttribute(starSizes, 1));
+                const starMat = new THREE.ShaderMaterial({
+                    uniforms: { 
+                        uTime: { value: 0 },
+                        uPixelRatio: { value: pixelRatioRef.current },
+                        uResponsiveScale: { value: responsiveScaleRef.current }
+                    },
+                    vertexShader: `
+                        attribute float aSize;
+                        uniform float uTime;
+                        uniform float uPixelRatio;
+                        uniform float uResponsiveScale;
+                        void main() {
+                            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                            float sizeFactor = uPixelRatio * max(0.6, uResponsiveScale);
+                            gl_PointSize = aSize * (150.0 / -mvPosition.z) * (0.8 + 0.2 * sin(uTime + position.x)) * sizeFactor;
+                            gl_Position = projectionMatrix * mvPosition;
+                        }
+                    `,
+                    fragmentShader: `
+                        void main() {
+                            float d = length(gl_PointCoord - 0.5);
+                            if (d > 0.5) discard;
+                            gl_FragColor = vec4(0.8, 0.9, 1.0, 1.0 - d * 2.0);
+                        }
+                    `,
+                    transparent: true,
+                    blending: THREE.AdditiveBlending
+                });
+                const stars = new THREE.Points(starGeo, starMat);
+                backgroundGroup.add(stars);
+                starFieldRef.current = stars;
+
+                // 1.2 Space Dust / Nebula Fog
+                const nebulaGeo = new THREE.PlaneGeometry(100, 100);
+                const nebulaMat = new THREE.ShaderMaterial({
+                    uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(0x1a0a2e) } },
+                    vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+                    fragmentShader: `
+                        varying vec2 vUv; uniform float uTime; uniform vec3 uColor;
+                        void main() {
+                            float n = sin(vUv.x * 5.0 + uTime * 0.1) * cos(vUv.y * 5.0 - uTime * 0.15);
+                            float dist = length(vUv - 0.5);
+                            float alpha = smoothstep(0.8, 0.2, dist) * (0.05 + 0.05 * n);
+                            gl_FragColor = vec4(uColor, alpha);
+                        }
+                    `,
+                    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+                });
+                const nebula = new THREE.Mesh(nebulaGeo, nebulaMat);
+                nebula.position.z = -30;
+                backgroundGroup.add(nebula);
+                nebulaRef.current = nebula;
+
+                // 1.3 Sphere Aura (Halo)
+                const auraGeo = new THREE.PlaneGeometry(10, 10);
+                const auraUniforms = { 
+                    uTime: { value: 0 }, 
+                    uBass: { value: 0 },
+                    uResponsiveScale: { value: responsiveScaleRef.current }
+                };
+                const auraMat = new THREE.ShaderMaterial({
+                    uniforms: auraUniforms,
+                    vertexShader: `
+                        varying vec2 vUv; 
+                        uniform float uResponsiveScale;
+                        void main() { 
+                            vUv = uv; 
+                            // Scale the aura mesh directly in the vertex shader for simplicity
+                            vec3 pos = position * uResponsiveScale;
+                            gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0); 
+                        }
+                    `,
+                    fragmentShader: `
+                        varying vec2 vUv; uniform float uTime; uniform float uBass;
+                        void main() {
+                            float dist = length(vUv - 0.5);
+                            float glow = smoothstep(0.5, 0.0, dist);
+                            float pulse = 0.4 + 0.6 * uBass;
+                            gl_FragColor = vec4(0.4, 0.2, 0.6, glow * 0.07 * pulse);
+                        }
+                    `,
+                    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+                });
+                const aura = new THREE.Mesh(auraGeo, auraMat);
+                aura.position.z = -0.5;
+                scene.add(aura);
+                auraRef.current = aura;
+                auraUniformsRef.current = auraUniforms;
+
+                // --- 2. Create Point Cloud Sphere Helper ---
+                const createSphere = (baseHex, particleCount = 4000) => {
+                    const geometry = new THREE.BufferGeometry();
+                    const positions = new Float32Array(particleCount * 3);
+                    const colors = new Float32Array(particleCount * 3);
+                    const phase = new Float32Array(particleCount);
+                    const speed = new Float32Array(particleCount);
+                    const baseColor = new THREE.Color(baseHex);
+
+                    for (let i = 0; i < particleCount; i++) {
+                        const radius = 2.0 * Math.pow(Math.random(), 0.4);
+                        const theta = Math.random() * 2 * Math.PI;
+                        const phi = Math.acos((Math.random() * 2) - 1);
+                        positions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
+                        positions[i * 3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
+                        positions[i * 3 + 2] = radius * Math.cos(phi);
+                        colors[i * 3] = baseColor.r + (Math.random() - 0.5) * 0.2;
+                        colors[i * 3 + 1] = baseColor.g + (Math.random() - 0.5) * 0.2;
+                        colors[i * 3 + 2] = baseColor.b + (Math.random() - 0.5) * 0.2;
+                        phase[i] = Math.random() * Math.PI * 2;
+                        speed[i] = 0.5 + Math.random() * 1.5;
+                    }
+
+                    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+                    geometry.setAttribute('aPhase', new THREE.BufferAttribute(phase, 1));
+                    geometry.setAttribute('aSpeed', new THREE.BufferAttribute(speed, 1));
+
+                    const uniforms = {
+                        uTime: { value: 0.0 },
+                        uGlobalOpacity: { value: 0.8 },
+                        uFreq: { value: 0.0 },
+                        uBass: { value: 0.0 },
+                        uPixelRatio: { value: pixelRatioRef.current },
+                        uResponsiveScale: { value: responsiveScaleRef.current }
+                    };
+
+                    const material = new THREE.ShaderMaterial({
+                        uniforms: uniforms,
+                        vertexShader: `
+                            attribute float aPhase;
+                            attribute float aSpeed;
+                            attribute vec3 color;
+                            varying vec3 vColor;
+                            varying float vAlpha;
+                            uniform float uTime;
+                            uniform float uGlobalOpacity;
+                            uniform float uFreq;
+                            uniform float uBass;
+                            uniform float uPixelRatio;
+                            uniform float uResponsiveScale;
+                            void main() {
+                                vColor = color;
+                                float dist = length(position);
+                                float rhythm = sin(uTime * aSpeed + aPhase + dist * 2.0);
+                                float normRhythm = (rhythm + 1.0) * 0.5;
+                                // Base alpha + dramatic snappy bass brightness boost (slightly more visible on small screens)
+                                float visibilityBoost = uResponsiveScale < 0.8 ? 0.3 : 0.0;
+                                vAlpha = (0.5 + visibilityBoost + 0.8 * normRhythm) * uGlobalOpacity + (uBass * 2.5);
+                                float bounce = uFreq * fract(aPhase * 100.0) * 0.35; 
+                                float totalPulse = min(1.0, 0.72 + 0.06 * normRhythm + bounce); 
+                                vec3 pos = position * totalPulse;
+                                vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                                gl_Position = projectionMatrix * mvPosition;
+                                // Increase particle size with bass for extra punch, corrected for pixel ratio
+                                float baseSize = (11.0 + 10.0 * normRhythm + uBass * 6.0);
+                                gl_PointSize = baseSize * (1.0 / -mvPosition.z) * uPixelRatio * max(0.6, uResponsiveScale);
+                            }
+                        `,
+                        fragmentShader: `
+                            varying vec3 vColor;
+                            varying float vAlpha;
+                            void main() {
+                                vec2 coord = gl_PointCoord - vec2(0.5);
+                                float len = length(coord);
+                                if(len > 0.5) discard;
+                                float strength = smoothstep(0.0, 1.0, 1.0 - (len * 2.0));
+                                gl_FragColor = vec4(vColor * strength, vAlpha * strength);
+                            }
+                        `,
+                        transparent: true,
+                        blending: THREE.AdditiveBlending,
+                        depthWrite: false
+                    });
+
+                    return { mesh: new THREE.Points(geometry, material), uniforms };
+                };
+
+                // Main Sphere (Mid)
+                const mainObj = createSphere(0x9b51e0, 6500); // Slightly more particles for focus
+                scene.add(mainObj.mesh);
+                sphereRef.current = mainObj.mesh;
+                sphereUniformsRef.current = mainObj.uniforms;
+
+                // --- 2. Inner Play Triangle removed ---
+
+                // --- Render Loop & Interactions ---
+                let animationFrameId;
+
+                const renderCanvas = () => {
+                    const maxAngle = (tracks.length - 1) * 12;
+                    targetCarouselAngleRef.current = Math.max(0, Math.min(targetCarouselAngleRef.current, maxAngle));
+                    let bassReact = 0;
+                    let midReact = 0;
+                    let highReact = 0;
+                    
+                    // Multi-band analysis
+                    if (analyserRef.current && dataArrayRef.current && sourceNodeRef.current) {
+                        analyserRef.current.getByteFrequencyData(dataArrayRef.current);
+                        
+                        // Bass (Kick/Sub): 1-5 (~20Hz to 100Hz)
+                        let bSum = 0; for(let i=1; i<6; i++) bSum += dataArrayRef.current[i];
+                        bassReact = Math.pow((bSum / 5) / 255.0, 2.5); // Steeper curve for punchier response
+
+                        // Mid (Vocals/Inst): 20-100 (~430Hz to 2.1kHz)
+                        let mSum = 0; for(let i=20; i<101; i++) mSum += dataArrayRef.current[i];
+                        midReact = Math.pow((mSum / 80) / 255.0, 2.0);
+
+                        // High (Crisp/Detail): 200-500 (~4.3kHz to 10.7kHz)
+                        let hSum = 0; for(let i=200; i<501; i++) hSum += dataArrayRef.current[i];
+                        highReact = Math.pow((hSum / 300) / 255.0, 2.0);
+                    }
+
+                    // Connected Orbit Interaction State
+                    orbitOpacityRef.current += ((showAlbumsRef.current ? 1 : 0) - orbitOpacityRef.current) * 0.15;
+                    longPressScaleBoostRef.current += ((showAlbumsRef.current ? 0.3 : 0) - longPressScaleBoostRef.current) * 0.1;
+
+                    // Sphere physical size reaction (Volume + Long Press + Responsive Scale)
+                    const vol = volumeRef.current;
+                    const resScale = responsiveScaleRef.current;
+                    const baseScale = (0.2 + (vol * 0.8)) * resScale; 
+                    const targetScale = baseScale + longPressScaleBoostRef.current * resScale;
+                    sphereRef.current.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.2);
+                    
+                    // Perspective-Correct Ring Scaling
+                    if (ringGroupRef.current) {
+                        const D = 4.7434; 
+                        const R_sphere = 2.0 * sphereRef.current.scale.x;
+                        const L = Math.sqrt(Math.max(0.1, D*D - R_sphere*R_sphere));
+                        const visualRadiusSphere = R_sphere / L;
+                        
+                        // Slightly tighter ring on small screens to save space
+                        const margin = resScale < 0.7 ? 0.015 : 0.025;
+                        const targetRingRadius = (visualRadiusSphere + margin) * D; 
+                        const targetRingScale = targetRingRadius / 2.2; 
+                        
+                        ringGroupRef.current.scale.set(targetRingScale, targetRingScale, targetRingScale);
+                    }
+
+                    // Update Progress Ring (even if paused, to reflect track resets/seek updates)
+                    if (audioCtxRef.current && durationRef.current && !isDraggingProgressRef.current) {
+                        let prog = 0;
+                        if (isPlayingRef.current) {
+                            if (!sourceNodeRef.current) {
+                                prog = 0; // Loading state
+                            } else {
+                                const elapsed = audioCtxRef.current.currentTime - startTimeRef.current + playbackTimeRef.current;
+                                prog = Math.min(1.0, Math.max(0.0, elapsed / durationRef.current));
+                            }
+                        } else {
+                            // Paused or completely stopped state (retains manual seeks or returns to 0 on new track)
+                            prog = Math.min(1.0, Math.max(0.0, playbackTimeRef.current / durationRef.current));
+                        }
+                        
+                        // Snappy backward jump instantly upon track skip or manual reset
+                        if (prog < ringUniformsRef.current.progress.value - 0.05) {
+                            ringUniformsRef.current.progress.value = prog;
+                        } else {
+                            ringUniformsRef.current.progress.value += (prog - ringUniformsRef.current.progress.value) * 0.3;
+                        }
+                    }
+                    
+                    // Native Knob Orbit Trajectory
+                    if (progressKnobRef.current && ringUniformsRef.current) {
+                        const currentProg = ringUniformsRef.current.progress.value;
+                        const theta = currentProg * Math.PI * 2;
+                        progressKnobRef.current.position.x = 2.2 * Math.cos(theta);
+                        progressKnobRef.current.position.y = 2.2 * Math.sin(theta);
+                        progressKnobRef.current.position.z = 0;
+                    }
+
+                    // Dynamic Orbit Radius hugging the actively scaled sphere
+                    const currentSphereOuterRadius = 2.0 * sphereRef.current.scale.x;
+                    const dynamicOrbitRadius = showAlbumsRef.current ? currentSphereOuterRadius + 0.6 : 0.01;
+                    orbitRadiusRef.current += (dynamicOrbitRadius - orbitRadiusRef.current) * 0.15;
+
+                    // Sphere Engine visual parameters
+                    const sphereOpTarget = 1.1 + (midReact * 0.4); 
+                    if (sphereUniformsRef.current) {
+                        sphereUniformsRef.current.uGlobalOpacity.value += (sphereOpTarget - sphereUniformsRef.current.uGlobalOpacity.value) * 0.1;
+                        sphereUniformsRef.current.uTime.value += 0.02; 
+                        sphereUniformsRef.current.uFreq.value += (midReact - sphereUniformsRef.current.uFreq.value) * 0.15; 
+                        sphereUniformsRef.current.uBass.value += (bassReact - sphereUniformsRef.current.uBass.value) * 0.4;
+                    }
+
+                    // Background Atmosphere Logic
+                    if (starFieldRef.current) starFieldRef.current.material.uniforms.uTime.value += 0.01;
+                    if (nebulaRef.current) nebulaRef.current.material.uniforms.uTime.value += 0.005;
+                    if (auraUniformsRef.current) {
+                        auraUniformsRef.current.uTime.value += 0.02;
+                        auraUniformsRef.current.uBass.value += (bassReact - auraUniformsRef.current.uBass.value) * 0.1;
+                    }
+                    // Parallax: Slowly drift background based on navigation
+                    backgroundGroupRef.current.rotation.y = -autoRotateAngleRef.current * 0.2 - (carouselAngleRef.current * (Math.PI / 180) * 0.1);
+
+                    // Unified Rotation Loop
+                    carouselAngleRef.current += (targetCarouselAngleRef.current - carouselAngleRef.current) * 0.15;
+                    
+                    // Idle Auto-Rotation (Smooth slowly, Continuous Y-Axis Spin, even when paused)
+                    autoRotateAngleRef.current += 0.0006; 
+                    
+                    // Y-axis integrates auto-rotation and interactive swivel (Negative sign synchronizes sphere geometry with orbit belt direction)
+                    // Scaled rotation multiplier up drastically (2.2x) giving the swipe a highly responsive and pronounced spin
+                    sphereRef.current.rotation.y = -autoRotateAngleRef.current - (carouselAngleRef.current * (Math.PI / 180) * 2.2);
+                    sphereRef.current.rotation.z = 0; // Ensure Z is locked
+
+                    // --- Carousel 3D Orbital Trajectory Animation ---
+                    albumMeshes.forEach((mesh, i) => {
+                        let localAngle = (i * 12) - carouselAngleRef.current; // Snug 12deg spacing
+                        while(localAngle > 180) localAngle -= 360;
+                        while(localAngle < -180) localAngle += 360;
+                        
+                        const absAngle = Math.abs(localAngle);
+                        const angleRad = localAngle * (Math.PI / 180);
+                        
+                        // Center emphasis peak (sharper due to 12 deg spacing)
+                        const peak = Math.pow(Math.max(0, Math.cos(angleRad)), 12);
+                        
+                        // Make out-of-center items physically dimmer and fainter
+                        const baseVis = Math.max(0, 1 - (absAngle / 120));
+                        const itemBaseOpacity = baseVis * (0.3 + 0.7 * peak);
+                        mesh.material.opacity = itemBaseOpacity * orbitOpacityRef.current;
+                        
+                        const r = orbitRadiusRef.current;
+                        mesh.position.x = Math.sin(angleRad) * r;
+                        mesh.position.z = Math.cos(angleRad) * r;
+                        mesh.rotation.y = localAngle * (Math.PI / 180);
+
+                        const targetItemScale = 0.6 + 0.6 * peak; // 1.2 center, 0.6 outer
+                        mesh.scale.setScalar(targetItemScale * Math.max(0.1, orbitOpacityRef.current));
+
+                        const isCenter = absAngle < 6;
+                        // Center is pure white (original image colors, 100% clarity), outer is dimmed to 0x666666
+                        const targetColor = isCenter ? new THREE.Color(0xffffff) : new THREE.Color(0x666666);
+                        mesh.material.color.lerp(targetColor, 0.1);
+                    });
+
+                    renderer.render(scene, camera);
+                    animationFrameId = requestAnimationFrame(renderCanvas);
+                };
+                renderCanvas();
+
+                const handleResize = () => {
+                    const width = mount.clientWidth;
+                    const height = mount.clientHeight;
+                    camera.aspect = width / height;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(width, height);
+                    
+                    // Unified Responsive Scale Calculation
+                    const isMobile = width < 600;
+                    const baseDimension = Math.min(width, height);
+                    const scale = baseDimension / 900.0; // Normalized for 900px base
+                    responsiveScaleRef.current = isMobile ? Math.min(scale, 0.75) : Math.min(scale, 1.2);
+                    
+                    // Update Uniforms
+                    if (sphereUniformsRef.current) sphereUniformsRef.current.uResponsiveScale.value = responsiveScaleRef.current;
+                    if (starFieldRef.current) starFieldRef.current.material.uniforms.uResponsiveScale.value = responsiveScaleRef.current;
+                    if (auraUniformsRef.current) auraUniformsRef.current.uResponsiveScale.value = responsiveScaleRef.current;
+                };
+                window.addEventListener('resize', handleResize);
+                handleResize(); // Initial call
+
+                return () => {
+                    window.removeEventListener('resize', handleResize);
+                    cancelAnimationFrame(animationFrameId);
+                    mount.removeChild(renderer.domElement);
+                    if (sphereRef.current) {
+                        sphereRef.current.geometry.dispose();
+                        sphereRef.current.material.dispose();
+                    }
+                    if (starFieldRef.current) {
+                        starFieldRef.current.geometry.dispose();
+                        starFieldRef.current.material.dispose();
+                    }
+                    if (nebulaRef.current) {
+                        nebulaRef.current.geometry.dispose();
+                        nebulaRef.current.material.dispose();
+                    }
+                    if (auraRef.current) {
+                        auraRef.current.geometry.dispose();
+                        auraRef.current.material.dispose();
+                    }
+                    
+                    albumMeshes.forEach(mesh => {
+                        mesh.material.map.dispose();
+                        mesh.material.dispose();
+                        mesh.geometry.dispose();
+                    });
+                    
+                    renderer.dispose();
+                    
+                    if (sourceNodeRef.current) {
+                        safeStopAndDisconnect(sourceNodeRef.current);
+                    }
+                    if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+                        audioCtxRef.current.close();
+                    }
+                };
+            }, []); // Empty dependency ensures scene only initializes once
+
+            const adjustVolume = useCallback((delta) => {
+                let newVol = volumeRef.current + delta;
+                newVol = Math.max(0, Math.min(1, newVol));
+                if (gainNodeRef.current) {
+                    gainNodeRef.current.gain.value = newVol;
+                }
+                volumeRef.current = newVol;
+                setVolume(newVol);
+            }, []);
+
+            useEffect(() => {
+                let wheelAccumulator = 0;
+                let wheelTimeout = null;
+
+                const handleKeyDown = (e) => {
+                    const isSpace = e.code === 'Space' || e.key === ' ' || e.keyCode === 32 || e.which === 32;
+                    if (isSpace && !e.repeat) {
+                        e.preventDefault();
+                        togglePlay();
+                    } else if (e.code === 'ArrowLeft') {
+                        // User specifically requested Left = Next
+                        setTrackIndex(prev => {
+                            const newIdx = Math.min(tracks.length - 1, prev + 1);
+                            if (newIdx !== prev) { targetCarouselAngleRef.current += 12; isPlayingRef.current = true; setIsPlaying(true); }
+                            return newIdx;
+                        });
+                    } else if (e.code === 'ArrowRight') {
+                        // User specifically requested Right = Prev
+                        setTrackIndex(prev => {
+                            const newIdx = Math.max(0, prev - 1);
+                            if (newIdx !== prev) { targetCarouselAngleRef.current -= 12; isPlayingRef.current = true; setIsPlaying(true); }
+                            return newIdx;
+                        });
+                    } else if (e.code === 'ArrowUp') {
+                        e.preventDefault();
+                        adjustVolume(e.repeat ? 0.02 : 0.1);
+                    } else if (e.code === 'ArrowDown') {
+                        e.preventDefault();
+                        adjustVolume(e.repeat ? -0.02 : -0.1);
+                    }
+                };
+
+                const handleWheel = (e) => {
+                    if (isWheelThrottledRef.current) return;
+                    
+                    const absX = Math.abs(e.deltaX);
+                    const absY = Math.abs(e.deltaY);
+
+                    if (absX > absY && absX > 30) {
+                        e.preventDefault();
+                        isWheelThrottledRef.current = true;
+                        
+                        setTrackIndex(prev => {
+                            // Flipped: deltaX < 0 (Scroll Left) -> Next Track
+                            let newIdx = e.deltaX < 0 ? Math.min(tracks.length - 1, prev + 1) : Math.max(0, prev - 1);
+                            if (newIdx !== prev) {
+                                targetCarouselAngleRef.current += e.deltaX < 0 ? 12 : -12;
+                                isPlayingRef.current = true; setIsPlaying(true);
+                            }
+                            return newIdx;
+                        });
+                        
+                        setTimeout(() => { isWheelThrottledRef.current = false; }, 600);
+                    } else if (absY > absX && absY > 30) {
+                        e.preventDefault();
+                        isWheelThrottledRef.current = true;
+                        
+                        adjustVolume(e.deltaY > 0 ? -0.1 : 0.1);
+                        
+                        setTimeout(() => { isWheelThrottledRef.current = false; }, 150);
+                    }
+                };
+
+                window.addEventListener('keydown', handleKeyDown);
+                window.addEventListener('wheel', handleWheel, { passive: false });
+                
+                return () => {
+                    window.removeEventListener('keydown', handleKeyDown);
+                    window.removeEventListener('wheel', handleWheel);
+                    if (wheelTimeout) clearTimeout(wheelTimeout);
+                };
+            }, [adjustVolume, togglePlay]);
+
+            const togglePlay = useCallback(() => {
+                if (!audioBufferRef.current || !audioCtxRef.current) return;
+                
+                if (audioCtxRef.current.state === 'suspended') {
+                    audioCtxRef.current.resume();
+                }
+
+                if (isPlayingRef.current) {
+                    if (sourceNodeRef.current) {
+                        safeStopAndDisconnect(sourceNodeRef.current);
+                        sourceNodeRef.current = null;
+                        
+                        const elapsed = audioCtxRef.current.currentTime - startTimeRef.current;
+                        playbackTimeRef.current += elapsed;
+                    }
+                    isPlayingRef.current = false;
+                    setIsPlaying(false);
+                } else {
+                    const source = audioCtxRef.current.createBufferSource();
+                    source.buffer = audioBufferRef.current;
+                    
+                    source.connect(analyserRef.current);
+                    analyserRef.current.connect(gainNodeRef.current);
+                    gainNodeRef.current.connect(audioCtxRef.current.destination);
+                    
+                    source.onended = () => {
+                        setTrackIndex(prev => {
+                            if (prev + 1 < tracks.length) {
+                                targetCarouselAngleRef.current += 12;
+                                playbackTimeRef.current = 0;
+                                return prev + 1;
+                            }
+                            return prev;
+                        });
+                    };
+
+                    const offset = playbackTimeRef.current % audioBufferRef.current.duration;
+                    source.start(0, offset);
+                    
+                    startTimeRef.current = audioCtxRef.current.currentTime;
+                    sourceNodeRef.current = source;
+                    
+                    isPlayingRef.current = true;
+                    setIsPlaying(true);
+                }
+            }, []);
+
+            const cancelLongPress = () => {
+                if (longPressTimerRef.current) {
+                    clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                }
+            };
+
+            const formatTime = (secs) => {
+                const m = Math.floor(secs / 60);
+                const s = Math.floor(secs % 60).toString().padStart(2, '0');
+                return `${m}:${s}`;
+            };
+
+            const updateProgressFromScreen = (screenX, screenY) => {
+                const centerX = window.innerWidth / 2;
+                const centerY = window.innerHeight / 2;
+                const dx = screenX - centerX;
+                const dy = screenY - centerY;
+                
+                // negative dy because screen Y goes down, we want 12 o'clock at top (-Y)
+                let angle = Math.atan2(dx, -dy);
+                if (angle < 0) angle += Math.PI * 2;
+                
+                let progress = angle / (Math.PI * 2);
+                
+                // Stopper Logic: prevent accidental jumps between ~0% and ~100% (at the 12 o'clock line)
+                const lastProg = progressDragValueRef.current;
+                if (lastProg > 0.8 && progress < 0.2) {
+                    progress = 1.0;
+                } else if (lastProg < 0.2 && progress > 0.8) {
+                    progress = 0.0;
+                }
+                
+                progressDragValueRef.current = progress;
+                ringUniformsRef.current.progress.value = progress;
+            };
+
+            const seekTo = (progress, forcePlay = false) => {
+                if (!audioBufferRef.current) return;
+                
+                if (sourceNodeRef.current) {
+                    safeStopAndDisconnect(sourceNodeRef.current);
+                    sourceNodeRef.current = null;
+                }
+                
+                playbackTimeRef.current = progress * durationRef.current;
+                ringUniformsRef.current.progress.value = progress;
+                
+                // If forcePlay is true (e.g. from gesture release), always start.
+                // Otherwise only resume if we were already playing.
+                if (isPlayingRef.current || forcePlay) {
+                    if (audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume();
+                    
+                    const newSource = audioCtxRef.current.createBufferSource();
+                    newSource.buffer = audioBufferRef.current;
+                    
+                    newSource.connect(analyserRef.current); 
+                    
+                    newSource.onended = () => {
+                        playbackTimeRef.current = 0;
+                        targetCarouselAngleRef.current += 12;
+                        setTrackIndex(prev => (prev + 1) % tracks.length);
+                    };
+                    
+                    newSource.start(0, playbackTimeRef.current);
+                    startTimeRef.current = audioCtxRef.current.currentTime;
+                    sourceNodeRef.current = newSource;
+                    
+                    if (forcePlay && !isPlayingRef.current) {
+                        isPlayingRef.current = true;
+                        setIsPlaying(true);
+                    }
+                }
+            };
+
+            const handlePointerDown = (e) => {
+                if (cameraRef.current && mountRef.current) {
+                    const rect = mountRef.current.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    
+                    mouseRef.current.x = (x / rect.width) * 2 - 1;
+                    mouseRef.current.y = -(y / rect.height) * 2 + 1;
+                    
+                    raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+                    
+                    // Check if hit progress ring
+                    if (hitRingRef.current) {
+                        const hitIntersects = raycasterRef.current.intersectObject(hitRingRef.current);
+                        if (hitIntersects.length > 0) {
+                            isDraggingProgressRef.current = true;
+                            pointerDownRef.current = true;
+                            pointerStartXRef.current = e.clientX;
+                            pointerStartYRef.current = e.clientY;
+                            pointerAxisRef.current = 'progress';
+                            updateProgressFromScreen(e.clientX, e.clientY);
+                            cancelLongPress();
+                            return; // Bypass sphere logic
+                        }
+                    }
+                    
+                    // Sphere has base radius 2.0 scaled dynamically
+                    if (sphereRef.current) {
+                        const currentScale = sphereRef.current.scale.x;
+                        const boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 2.0 * currentScale);
+                        
+                        if (!raycasterRef.current.ray.intersectsSphere(boundingSphere)) {
+                            return; // Ignore clicks on the empty black space
+                        }
+                    }
+                }
+
+                pointerDownRef.current = true;
+                pointerStartXRef.current = e.clientX;
+                pointerStartYRef.current = e.clientY;
+                pointerAxisRef.current = null;
+                dragStartVolumeRef.current = volumeRef.current;
+                dragStartAngleRef.current = targetCarouselAngleRef.current;
+                
+                longPressTimerRef.current = setTimeout(() => {
+                    showAlbumsRef.current = true;
+                    setShowAlbums(true);
+                }, 400); // 400ms long press threshold
+            };
+
+            const handlePointerMove = (e) => {
+                if (!pointerDownRef.current) return;
+                
+                if (isDraggingProgressRef.current) {
+                    updateProgressFromScreen(e.clientX, e.clientY);
+                    return;
+                }
+                
+                const deltaX = e.clientX - pointerStartXRef.current;
+                const deltaY = e.clientY - pointerStartYRef.current;
+                
+                if (showAlbumsRef.current) {
+                    targetCarouselAngleRef.current = dragStartAngleRef.current - (deltaX / 80) * 12; // Inverted drag direction
+                    return;
+                }
+
+                // Cancel long press if moving significantly
+                if (Math.abs(deltaX) > 10 || Math.abs(deltaY) > 10) {
+                    cancelLongPress();
+                }
+                
+                if (!pointerAxisRef.current && (Math.abs(deltaX) > 10 || Math.abs(deltaY) > 10)) {
+                    pointerAxisRef.current = Math.abs(deltaY) > Math.abs(deltaX) ? 'v' : 'h';
+                }
+
+                if (pointerAxisRef.current === 'v') {
+                    // Update volume based on vertical drag
+                    let newVol = dragStartVolumeRef.current - (deltaY / 200); // 200px drag = full volume change
+                    newVol = Math.max(0, Math.min(1, newVol));
+                    
+                    if (gainNodeRef.current) {
+                        gainNodeRef.current.gain.value = newVol;
+                    }
+                    volumeRef.current = newVol;
+                    setVolume(newVol);
+                }
+            };
+
+            const handlePointerUp = (e) => {
+                cancelLongPress();
+                
+                if (isDraggingProgressRef.current) {
+                    isDraggingProgressRef.current = false;
+                    seekTo(progressDragValueRef.current);
+                    pointerDownRef.current = false;
+                    pointerAxisRef.current = null;
+                    return;
+                }
+                
+                if (showAlbumsRef.current) {
+                    showAlbumsRef.current = false;
+                    setShowAlbums(false);
+                    pointerDownRef.current = false;
+                    pointerAxisRef.current = null;
+                    
+                    const Math_round = Math.round; // minifier safe
+                    const exactIndex = Math_round(targetCarouselAngleRef.current / 12);
+                    targetCarouselAngleRef.current = exactIndex * 12;
+                    
+                    let newIndex = ((exactIndex % tracks.length) + tracks.length) % tracks.length;
+                    
+                    if (newIndex !== trackIndex) {
+                        setTrackIndex(newIndex);
+                        isPlayingRef.current = true;
+                        setIsPlaying(true);
+                    } else if (!isPlayingRef.current) {
+                        togglePlay();
+                    }
+                    return; // Do not trigger click or normal swipe
+                }
+
+                if (!pointerDownRef.current) return;
+                pointerDownRef.current = false;
+                
+                const deltaX = e.clientX - pointerStartXRef.current;
+                
+                if (pointerAxisRef.current === 'h' && Math.abs(deltaX) > 40) {
+                    // Horizontal swipe (Inverted to match standard touch interactions)
+                    if (deltaX < 0) { // Swipe Left -> Next Track
+                        setTrackIndex(prev => (prev + 1) % tracks.length);
+                        targetCarouselAngleRef.current += 12;
+                    } else { // Swipe Right -> Prev Track
+                        setTrackIndex(prev => (prev - 1 + tracks.length) % tracks.length);
+                        targetCarouselAngleRef.current -= 12;
+                    }
+                } else if (!pointerAxisRef.current) {
+                    // Click
+                    togglePlay();
+                }
+                pointerAxisRef.current = null;
+            };
+
+            // ==========================================
+            // NEW VISION & HAND TRACKING LAYER
+            // ==========================================
+            
+            const detectHandState = (landmarks) => {
+                let foldedFingers = 0;
+                if (landmarks[8].y > landmarks[6].y) foldedFingers++;
+                if (landmarks[12].y > landmarks[10].y) foldedFingers++;
+                if (landmarks[16].y > landmarks[14].y) foldedFingers++;
+                if (landmarks[20].y > landmarks[18].y) foldedFingers++;
+                if (foldedFingers >= 3) return 'CLOSED';
+                return 'OPEN';
+            };
+
+            const checkFiveFingerPinch = (landmarks) => {
+                const tips = [landmarks[4], landmarks[8], landmarks[12], landmarks[16], landmarks[20]];
+                let cx = 0, cy = 0, cz = 0;
+                tips.forEach(t => { cx += t.x; cy += t.y; cz += t.z; });
+                cx /= 5; cy /= 5; cz /= 5;
+                
+                let maxDist = 0;
+                tips.forEach(t => {
+                    const d = Math.sqrt(Math.pow(cx-t.x, 2) + Math.pow(cy-t.y, 2) + Math.pow(cz-t.z, 2));
+                    if (d > maxDist) maxDist = d;
+                });
+                return maxDist < 0.08; 
+            };
+
+            const checkTwoFingerPinch = (landmarks) => {
+                const p = (i) => landmarks[i];
+                const d = (a,b) => Math.sqrt(Math.pow(a.x-b.x,2)+Math.pow(a.y-b.y,2)+Math.pow(a.z-b.z,2));
+                const pinchDist = d(p(4), p(8));
+                const openDist1 = d(p(4), p(12));
+                const openDist2 = d(p(4), p(16));
+                const openDist3 = d(p(4), p(20));
+                
+                return pinchDist < 0.06 && openDist1 > 0.08 && openDist2 > 0.08 && openDist3 > 0.08;
+            };
+
+            const getFingertipCentroid = (landmarks) => {
+                const tips = [landmarks[4], landmarks[8], landmarks[12], landmarks[16], landmarks[20]];
+                let cx = 0, cy = 0;
+                tips.forEach(t => { cx += t.x; cy += t.y; });
+                return { x: 1.0 - (cx / 5), y: cy / 5 };
+            };
+
+            const triggerAction = (action) => {
+                const now = performance.now();
+                if (now - actionCooldownRef.current < 800) return; 
+                actionCooldownRef.current = now;
+                
+                if (action === 'NEXT_TRACK') {
+                    setTrackIndex(prev => {
+                        const nxt = Math.min(tracks.length - 1, prev + 1);
+                        if (nxt !== prev) { targetCarouselAngleRef.current += 12; isPlayingRef.current = true; setIsPlaying(true); }
+                        return nxt;
+                    });
+                } else if (action === 'PREV_TRACK') {
+                    setTrackIndex(prev => {
+                        const nxt = Math.max(0, prev - 1);
+                        if (nxt !== prev) { targetCarouselAngleRef.current -= 12; isPlayingRef.current = true; setIsPlaying(true); }
+                        return nxt;
+                    });
+                } else if (action === 'VOL_UP') {
+                    let newVol = Math.min(1.0, volumeRef.current + 0.1);
+                    if (gainNodeRef.current) gainNodeRef.current.gain.value = newVol;
+                    volumeRef.current = newVol; setVolume(newVol);
+                } else if (action === 'VOL_DOWN') {
+                    let newVol = Math.max(0.0, volumeRef.current - 0.1);
+                    if (gainNodeRef.current) gainNodeRef.current.gain.value = newVol;
+                    volumeRef.current = newVol; setVolume(newVol);
+                }
+            };
+            
+            const handleGestures = (handResults, isLooking) => {
+                const hasHand = handResults.landmarks && handResults.landmarks.length > 0;
+
+                if (!isLooking || !hasHand) {
+                    trackingLossCountRef.current++;
+                    // Only end gestures if tracking is lost for 10 consecutive frames
+                    if (trackingLossCountRef.current > 10) {
+                        if (gesturePinchRef.current) endGesturePinch();
+                        if (gestureSeekRef.current) endGestureSeek();
+                        lastHandPosRef.current = null;
+                    }
+                    return;
+                }
+
+                // Reset loss counter if hand is detected and user is looking
+                trackingLossCountRef.current = 0;
+
+                const landmarks = handResults.landmarks[0];
+                const currentPos = getFingertipCentroid(landmarks);
+                const isFivePinch = checkFiveFingerPinch(landmarks);
+                const isTwoPinch = checkTwoFingerPinch(landmarks);
+
+                // --- 1. Two Finger Seek Mode ---
+                if (isTwoPinch && !gestureSeekRef.current && !gesturePinchRef.current) {
+                    gestureSeekRef.current = true;
+                    gestureStartPosRef.current = currentPos;
+                    const currentProg = ringUniformsRef.current ? ringUniformsRef.current.progress.value : 0;
+                    progressDragValueRef.current = currentProg;
+                } else if (!isTwoPinch && gestureSeekRef.current) {
+                    endGestureSeek();
+                    gestureStartPosRef.current = currentPos;
+                } else if (isTwoPinch && gestureSeekRef.current) {
+                    const dx = currentPos.x - gestureStartPosRef.current.x;
+                    const dragSpeed = 2.0; 
+                    let newProg = progressDragValueRef.current + dx * dragSpeed;
+                    newProg = Math.max(0, Math.min(1, newProg));
+                    progressDragValueRef.current = newProg;
+                    if (ringUniformsRef.current) ringUniformsRef.current.progress.value = newProg;
+                    gestureStartPosRef.current = currentPos;
+                    lastHandPosRef.current = currentPos;
+                    return;
+                }
+
+                // --- 2. Five Finger Nav Mode ---
+                if (isFivePinch && !gesturePinchRef.current && !gestureSeekRef.current) {
+                    gesturePinchRef.current = true;
+                    pinchStartPosRef.current = currentPos;
+                    pinchStartTimeRef.current = performance.now();
+                    dragStartAngleRef.current = targetCarouselAngleRef.current;
+                    
+                    pinchLongPressTimerRef.current = setTimeout(() => {
+                        showAlbumsRef.current = true; setShowAlbums(true);
+                    }, 400); 
+                } else if (!isFivePinch && gesturePinchRef.current) {
+                    endGesturePinch();
+                    gestureStartPosRef.current = currentPos;
+                } else if (isFivePinch && gesturePinchRef.current) {
+                    const deltaX = currentPos.x - pinchStartPosRef.current.x;
+                    
+                    if (showAlbumsRef.current) {
+                        // Flipped back to negative/minus to ensure Left = Next
+                        const pixelEquivalent = deltaX * -1000; 
+                        let targetA = dragStartAngleRef.current - (pixelEquivalent / 80) * 12;
+                        targetA = Math.max(0, Math.min((tracks.length - 1) * 12, targetA));
+                        targetCarouselAngleRef.current = targetA;
+                    } else {
+                        if (Math.abs(deltaX) > 0.05) {
+                            if (pinchLongPressTimerRef.current) {
+                                clearTimeout(pinchLongPressTimerRef.current);
+                                pinchLongPressTimerRef.current = null;
+                            }
+                        }
+                    }
+                    lastHandPosRef.current = currentPos;
+                    return;
+                }
+
+                // --- 3. Open Hand Discrete Swipes (Velocity based) ---
+                if (!isFivePinch && !isTwoPinch && !gesturePinchRef.current && !gestureSeekRef.current) {
+                    if (!lastHandPosRef.current) {
+                        lastHandPosRef.current = currentPos; 
+                        return;
+                    }
+                    const dx = currentPos.x - lastHandPosRef.current.x;
+                    const dy = currentPos.y - lastHandPosRef.current.y;
+                    
+                    // Increased threshold from 0.03 to 0.08 for "fast" requirement
+                    if (Math.abs(dx) > 0.08 || Math.abs(dy) > 0.08) { 
+                        // Increased ratio from 1.5 to 2.0 for horizontal/vertical dominance
+                        if (Math.abs(dx) > Math.abs(dy) * 2.0) {
+                            // Flipped: Left swipe (dx > 0) -> PREV, Right swipe (dx < 0) -> NEXT? 
+                            // No, User says CURRENTLY Left is Prev. So I swap them.
+                            triggerAction(dx > 0 ? 'PREV_TRACK' : 'NEXT_TRACK');
+                        } else if (Math.abs(dy) > Math.abs(dx) * 2.0) {
+                            triggerAction(dy < 0 ? 'VOL_UP' : 'VOL_DOWN'); 
+                        }
+                    }
+                    lastHandPosRef.current = currentPos;
+                }
+            };
+            
+            const endGestureSeek = () => {
+                gestureSeekRef.current = false;
+                // Force play after seek release
+                seekTo(progressDragValueRef.current, true);
+            };
+
+            const endGesturePinch = () => {
+                gesturePinchRef.current = false;
+                if (pinchLongPressTimerRef.current) {
+                    clearTimeout(pinchLongPressTimerRef.current);
+                    pinchLongPressTimerRef.current = null;
+                }
+                
+                if (showAlbumsRef.current) {
+                    showAlbumsRef.current = false; setShowAlbums(false);
+                    
+                    const Math_round = Math.round;
+                    const exactIndex = Math_round(targetCarouselAngleRef.current / 12);
+                    let newIndex = Math.max(0, Math.min(exactIndex, tracks.length - 1));
+                    targetCarouselAngleRef.current = newIndex * 12;
+                    
+                    // On album nav release: Always force play
+                    if (newIndex !== trackIndex) {
+                        setTrackIndex(newIndex);
+                        isPlayingRef.current = true; setIsPlaying(true);
+                    } else if (!isPlayingRef.current) {
+                        // If we are on the same track but paused, force play it
+                        togglePlay(); // togglePlay while paused will start it
+                    }
+                } else {
+                    const timeHeld = performance.now() - pinchStartTimeRef.current;
+                    if (timeHeld < 400) togglePlay();
+                }
+            };
+
+            const drawDebugOverlay = (handResults, faceResults, isLooking) => {
+                const canvas = canvasRef.current;
+                const video = videoRef.current;
+                if (!canvas || !video) return;
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.save();
+                ctx.scale(-1, 1);
+                ctx.translate(-canvas.width, 0);
+                if (video.readyState >= 2) {
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                }
+                ctx.restore();
+                
+                ctx.fillStyle = isLooking ? '#0f0' : '#f00';
+                ctx.font = 'bold 16px sans-serif';
+                ctx.fillText(`Attention: ${isLooking ? 'DETECTED' : 'LOST'}`, 10, 24);
+                
+                if (handResults.landmarks && handResults.landmarks.length > 0) {
+                    const landmarks = handResults.landmarks[0];
+                    const state = detectHandState(landmarks);
+                    const fivePinch = checkFiveFingerPinch(landmarks);
+                    const twoPinch = checkTwoFingerPinch(landmarks);
+                    let activeMode = "FREE";
+                    if (gestureSeekRef.current) activeMode = "SEEK_MODE";
+                    else if (showAlbumsRef.current) activeMode = "NAV_MODE";
+                    else if (twoPinch) activeMode = "PINCH (2)";
+                    else if (fivePinch) activeMode = "PINCH (5)";
+
+                    ctx.fillStyle = (twoPinch || fivePinch) ? '#ff0' : '#0ff';
+                    ctx.fillText(`Hand: ${state}`, 10, 50);
+                    ctx.fillText(`Mode: ${activeMode}`, 10, 74);
+                    
+                    ctx.fillStyle = 'rgba(0, 255, 255, 0.7)';
+                    landmarks.forEach((lm, i) => {
+                       ctx.beginPath();
+                       ctx.arc((1.0 - lm.x) * canvas.width, lm.y * canvas.height, [4,8,12,16,20].includes(i) ? 6 : 3, 0, 2*Math.PI);
+                       ctx.fill();
+                    });
+                } else {
+                    ctx.fillStyle = '#f80';
+                    ctx.fillText(`Hand: NOT FOUND`, 10, 50);
+                }
+            };
+            
+            const predictWebcam = useCallback(() => {
+                if (!videoRef.current || !faceLandmarkerRef.current || !handLandmarkerRef.current) return;
+                
+                let startTimeMs = performance.now();
+                if (videoRef.current.currentTime !== lastVideoTimeRef.current) {
+                    lastVideoTimeRef.current = videoRef.current.currentTime;
+                    
+                    const faceResults = faceLandmarkerRef.current.detectForVideo(videoRef.current, startTimeMs);
+                    let isLooking = false;
+                    if (faceResults.faceBlendshapes && faceResults.faceBlendshapes.length > 0) {
+                        isLooking = true; 
+                    }
+                    isUserLookingRef.current = isLooking;
+
+                    const handResults = handLandmarkerRef.current.detectForVideo(videoRef.current, startTimeMs);
+                    
+                    handleGestures(handResults, isLooking);
+                    
+                    if (canvasRef.current) {
+                        drawDebugOverlay(handResults, faceResults, isLooking);
+                    }
+                }
+                visionLoopRef.current = requestAnimationFrame(predictWebcam);
+            }, [togglePlay]); 
+
+            useEffect(() => {
+                let active = true;
+                const initializeVision = async () => {
+                    try {
+                         const vision = await eval('import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js")');
+                         const filesetResolver = await vision.FilesetResolver.forVisionTasks(
+                            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
+                        );
+                        if (!active) return;
+                        
+                        handLandmarkerRef.current = await vision.HandLandmarker.createFromOptions(filesetResolver, {
+                            baseOptions: {
+                                modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
+                                delegate: "GPU"
+                            },
+                            runningMode: "VIDEO",
+                            numHands: 1
+                        });
+
+                        faceLandmarkerRef.current = await vision.FaceLandmarker.createFromOptions(filesetResolver, {
+                            baseOptions: {
+                                modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
+                                delegate: "GPU"
+                            },
+                            outputFaceBlendshapes: true,
+                            runningMode: "VIDEO",
+                            numFaces: 1
+                        });
+
+                        navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } }).then((stream) => {
+                            if (videoRef.current && active) {
+                                videoRef.current.srcObject = stream;
+                                videoRef.current.addEventListener('loadeddata', () => {
+                                    if (active) predictWebcam();
+                                });
+                            }
+                        }).catch(err => console.error("Webcam access denied", err));
+
+                    } catch (e) {
+                        console.error("Vision init failed", e);
+                    }
+                };
+                initializeVision();
+                return () => { 
+                    active = false; 
+                    if (visionLoopRef.current) cancelAnimationFrame(visionLoopRef.current);
+                };
+            }, [predictWebcam]);
+
+            // ==========================================
+            // END VISION LAYER
+            // ==========================================
+
+            const playingTrackTitle = tracks[trackIndex].title;
+            const playingTrackArtist = tracks[trackIndex].artist;
+
+            const isSmallScreen = window.innerWidth < 600;
+
+            return (
+                <div 
+                    id="player-container"
+                    ref={mountRef} 
+                    style={{ width: '100%', height: '100%', touchAction: 'none', position: 'relative' }} 
+                    onPointerDown={handlePointerDown} 
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onPointerLeave={handlePointerUp}
+                >
+                    {/* --- Webcam Inputs --- */}
+                    <video ref={videoRef} autoPlay playsInline muted style={{ position: 'absolute', opacity: 0, width: 10, height: 10, pointerEvents: 'none' }} />
+                    
+                    {debugMode && (
+                         <div style={{ position: 'absolute', top: 20, left: 20, zIndex: 100, pointerEvents: 'none', background: 'rgba(0,0,0,0.6)', padding: 15, border: '1px solid #444', borderRadius: 10 }}>
+                            <canvas ref={canvasRef} width={320} height={240} style={{ transform: 'scaleX(1)', background: 'rgba(0,0,0,0.8)' }} />
+                         </div>
+                    )}
+                    
+                    <button 
+                        style={{ position: 'absolute', top: 20, right: 20, zIndex: 100, background: debugMode ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.5)', color: 'white', border: '1px solid #fff', borderRadius: 8, padding: '8px 16px', cursor: 'pointer', fontFamily: 'sans-serif', transition: 'all 0.2s' }} 
+                        onClick={(e) => { e.stopPropagation(); setDebugMode(prev => !prev); }}
+                        onPointerDown={(e) => e.stopPropagation()}
+                    >
+                        {debugMode ? 'Hide Webcam Debug' : 'Show Webcam Debug'}
+                    </button>
+
+                    {/* Responsive Track Info */}
+                    <div style={{
+                        position: 'absolute',
+                        top: isSmallScreen ? '60px' : 'auto',
+                        bottom: isSmallScreen ? 'auto' : '30px',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        color: 'white',
+                        textAlign: 'center',
+                        fontFamily: 'sans-serif',
+                        pointerEvents: 'none',
+                        zIndex: 20,
+                        padding: '15px 30px',
+                        borderRadius: '15px',
+                        textShadow: '0px 2px 10px rgba(0,0,0,0.8)',
+                        width: '80%',
+                        maxWidth: '400px'
+                    }}>
+                        <div style={{ fontSize: isSmallScreen ? '18px' : '22px', fontWeight: 'bold', marginBottom: '8px', letterSpacing: '0.5px' }}>
+                            {playingTrackTitle}
+                        </div>
+                        <div style={{ fontSize: isSmallScreen ? '13px' : '15px', color: 'rgba(255,255,255,0.7)' }}>
+                            {playingTrackArtist}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Use modern React 18 createRoot usage directly without needing a bundled import
+        const rootElement = document.getElementById('root');
+        // ReactDOM is loaded via script tag globally
+        const root = ReactDOM.createRoot(rootElement);
+        root.render(<PointCloudPlayer />);
+    </script>
+</body>
+</html>
